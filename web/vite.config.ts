@@ -77,6 +77,16 @@ export default defineConfig({
     },
   },
 
+  css: {
+    preprocessorOptions: {
+      scss: {
+        additionalData: `
+          @use '@/styles/naive-variables.scss' as *;
+        `,
+      },
+    },
+  },
+
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),

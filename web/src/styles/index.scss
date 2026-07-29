@@ -1,0 +1,288 @@
+@use "sass:color";
+@use "./global.scss";
+@use "./naive-variables.scss" as *;
+@use "./theme.scss";
+@use "./markdown.scss";
+@use "./typography.scss" as *;
+@use "nprogress/nprogress.css";
+
+// ==================== 根元素设置 ====================
+html {
+  font-size: $font-size-base; // 14px 基准
+  box-sizing: border-box;
+  overflow-y: scroll;
+  -webkit-tap-highlight-color: rgb(255 255 255 / 0%);
+
+  // 启用字体渲染优化
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
+}
+
+// ==================== 全局 body 样式 ====================
+body {
+  width: 100vw;
+  // 使用 Plus Jakarta Sans 作为首选字体 - 参考千问网站
+  font-family: "Plus Jakarta Sans", $font-family-base;
+  @include body-style;
+  
+  // 文本选择样式
+  @include text-selection;
+  
+  // 自定义属性
+  --at-apply: c-#{$text-color-primary};
+  --at-apply: bg-#fff;
+}
+
+// ==================== 标题样式 ====================
+h1 {
+  @include h1-style;
+}
+
+h2 {
+  @include h2-style;
+}
+
+h3 {
+  @include h3-style;
+}
+
+h4 {
+  @include h4-style;
+}
+
+h5 {
+  @include h5-style;
+}
+
+h6 {
+  @include h6-style;
+}
+
+// ==================== 代码样式 ====================
+code,
+kbd,
+pre,
+samp {
+  @include code-style;
+}
+
+:root {
+  overflow: hidden auto;
+}
+
+:root body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  position: absolute;
+}
+
+#app,
+html {
+  height: 100%;
+}
+
+dl,
+dt,
+dd,
+ul,
+ol,
+li,
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+pre,
+code,
+form,
+fieldset,
+legend,
+input,
+textarea,
+blockquote,
+th,
+td,
+hr,
+button,
+article,
+aside,
+details,
+figcaption,
+figure,
+footer,
+header,
+menu,
+nav,
+section {
+  margin: 0;
+  padding: 0;
+}
+
+// ==================== 链接样式 ====================
+a {
+  text-decoration: none;
+  background-color: transparent;
+  outline: none;
+  color: $color-primary;
+  transition: color 0.2s ease;
+
+  &:hover {
+    color: color.scale($color-primary, $lightness: 10%);
+    text-decoration: underline;
+  }
+
+  &:active {
+    color: color.scale($color-primary, $lightness: -10%);
+  }
+}
+
+// ==================== 段落样式 ====================
+p {
+  margin: 0 0 1em 0;
+  line-height: $line-height-relaxed;
+  color: $text-color-primary;
+
+  &:last-child {
+    margin-bottom: 0;
+  }
+}
+
+// ==================== 列表样式 ====================
+ul,
+ol {
+  padding-left: 1.5em;
+  margin: 0 0 1em 0;
+  line-height: $line-height-relaxed;
+
+  li {
+    margin-bottom: 0.25em;
+    line-height: $line-height-relaxed;
+  }
+}
+
+// ==================== 文本样式类 ====================
+.text-xs {
+  font-size: $font-size-xs;
+  line-height: $line-height-xs;
+}
+
+.text-sm {
+  font-size: $font-size-sm;
+  line-height: $line-height-sm;
+}
+
+.text-base {
+  font-size: $font-size-base;
+  line-height: $line-height-base;
+}
+
+.text-md {
+  font-size: $font-size-md;
+  line-height: $line-height-md;
+}
+
+.text-lg {
+  font-size: $font-size-lg;
+  line-height: $line-height-lg;
+}
+
+.text-xl {
+  font-size: $font-size-xl;
+  line-height: $line-height-xl;
+}
+
+.text-2xl {
+  font-size: $font-size-2xl;
+  line-height: $line-height-xl;
+}
+
+.text-3xl {
+  font-size: $font-size-3xl;
+  line-height: $line-height-xl;
+}
+
+.text-primary {
+  color: $text-color-primary;
+}
+
+.text-secondary {
+  color: $text-color-secondary;
+}
+
+.text-tertiary {
+  color: $text-color-tertiary;
+}
+
+.text-placeholder {
+  color: $text-color-placeholder;
+}
+
+.text-disabled {
+  color: $text-color-disabled;
+}
+
+.font-light {
+  font-weight: $font-weight-light;
+}
+
+.font-normal {
+  font-weight: $font-weight-normal;
+}
+
+.font-medium {
+  font-weight: $font-weight-medium;
+}
+
+.font-semibold {
+  font-weight: $font-weight-semibold;
+}
+
+.font-bold {
+  font-weight: $font-weight-bold;
+}
+
+.text-truncate {
+  @include text-truncate;
+}
+
+svg {
+  box-sizing: content-box;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: inherit;
+}
+
+// 滚动条样式
+
+// ::-webkit-scrollbar {
+//   width: 6px;
+//   height: 6px;
+// }
+
+// ::-webkit-scrollbar-thumb {
+//   background: rgba(#000, 0.2);
+//   border-radius: 3px;
+// }
+
+// ::-webkit-scrollbar-track {
+//   background: rgba(#000, 0.06);
+//   border-radius: 3px;
+// }
+
+table {
+  width: 100% !important;
+}
+
+// https://stackoverflow.com/questions/43778196/input-background-removed-by-chrome-autofill
+
+input:-webkit-autofill {
+  -webkit-box-shadow: 0 0 0 1000px #fff inset;
+  -moz-box-shadow: 0 0 0 100px #fff inset;
+  box-shadow: 0 0 0 100px #fff inset;
+}

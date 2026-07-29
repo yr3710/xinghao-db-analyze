@@ -1,0 +1,179 @@
+// 字体系统变量定义
+// Typography System Variables
+
+// ==================== 字体族 Font Family ====================
+// 参考千问网站使用 Plus Jakarta Sans 作为首选字体
+// 主字体栈：优先使用 Plus Jakarta Sans，回退到系统字体
+$font-family-base: "Plus Jakarta Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, "Noto Sans SC", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol";
+
+// 等宽字体栈：代码、表格数字等
+$font-family-mono: "SF Mono", "Monaco", "Inconsolata", "Fira Code", "Fira Mono", "Droid Sans Mono", "Source Code Pro", "Courier New", monospace, "Apple Color Emoji", "Segoe UI Emoji";
+
+// 数字字体栈：优化数字显示
+$font-family-numeric: "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+
+// ==================== 字体大小 Font Size ====================
+// 基于 14px 基准的字体大小系统
+$font-size-xs: 10px; // 辅助文本、标签
+$font-size-sm: 12px; // 次要信息、提示文本
+$font-size-base: 14px; // 基础正文（默认）
+$font-size-md: 16px; // 重要文本、正文内容
+$font-size-lg: 18px; // 重要标题、强调文本
+$font-size-xl: 20px; // 大标题
+$font-size-2xl: 24px; // 页面标题
+$font-size-3xl: 28px; // 大页面标题
+$font-size-4xl: 32px; // 超大标题
+$font-size-5xl: 36px; // Banner标题
+
+// 相对单位（用于响应式）
+$font-size-xs-rem: 0.714rem; // 10px / 14px
+$font-size-sm-rem: 0.857rem; // 12px / 14px
+$font-size-base-rem: 1rem; // 14px / 14px
+$font-size-md-rem: 1.143rem; // 16px / 14px
+$font-size-lg-rem: 1.286rem; // 18px / 14px
+$font-size-xl-rem: 1.429rem; // 20px / 14px
+$font-size-2xl-rem: 1.714rem; // 24px / 14px
+$font-size-3xl-rem: 2rem; // 28px / 14px
+$font-size-4xl-rem: 2.286rem; // 32px / 14px
+$font-size-5xl-rem: 2.571rem; // 36px / 14px
+
+// ==================== 行高 Line Height ====================
+// 基于字体大小的行高比例
+$line-height-tight: 1.2; // 标题、单行文本
+$line-height-snug: 1.375; // 紧凑文本
+$line-height-normal: 1.5; // 常规文本
+$line-height-relaxed: 1.625; // 宽松文本（适合长文本阅读）
+$line-height-loose: 1.75; // 非常宽松（适合长文章）
+
+// 固定行高（像素）
+$line-height-xs: 16px;
+$line-height-sm: 20px;
+$line-height-base: 22px;
+$line-height-md: 24px;
+$line-height-lg: 28px;
+$line-height-xl: 32px;
+
+// ==================== 字重 Font Weight ====================
+$font-weight-light: 300;
+$font-weight-normal: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+$font-weight-extrabold: 800;
+
+// ==================== 字间距 Letter Spacing ====================
+$letter-spacing-tighter: -0.05em; // 紧密（大标题）
+$letter-spacing-tight: -0.025em; // 紧凑（标题）
+$letter-spacing-normal: 0; // 正常
+$letter-spacing-wide: 0.025em; // 宽松（小文本）
+$letter-spacing-wider: 0.05em; // 更宽松（标签）
+$letter-spacing-widest: 0.1em; // 最宽松（大写字母）
+
+// ==================== 字体渲染优化 ====================
+// 已在 @mixin body-style 中应用
+
+// ==================== 颜色系统 Color System ====================
+// 文本颜色层次
+$text-color-primary: #1a1a1a; // 主要文本
+$text-color-secondary: #4a5568; // 次要文本
+$text-color-tertiary: #718096; // 辅助文本
+$text-color-placeholder: #a0aec0; // 占位符文本
+$text-color-disabled: #cbd5e0; // 禁用文本
+
+// 标题颜色
+$heading-color: #1a1a1a;
+$heading-color-light: #2d3748;
+
+// ==================== 标题样式 Heading Styles ====================
+@mixin heading-style($size, $line-height: $line-height-tight, $weight: $font-weight-semibold, $spacing: $letter-spacing-tight) {
+    font-size: $size;
+    line-height: $line-height;
+    font-weight: $weight;
+    letter-spacing: $spacing;
+    color: $heading-color;
+    margin-top: 0;
+    margin-bottom: 0.5em;
+}
+
+// H1 样式
+@mixin h1-style {
+    @include heading-style($font-size-4xl, $line-height-tight, $font-weight-bold, $letter-spacing-tighter);
+}
+
+// H2 样式
+@mixin h2-style {
+    @include heading-style($font-size-3xl, $line-height-tight, $font-weight-semibold, $letter-spacing-tight);
+}
+
+// H3 样式
+@mixin h3-style {
+    @include heading-style($font-size-2xl, $line-height-snug, $font-weight-semibold, $letter-spacing-normal);
+}
+
+// H4 样式
+@mixin h4-style {
+    @include heading-style($font-size-xl, $line-height-snug, $font-weight-medium, $letter-spacing-normal);
+}
+
+// H5 样式
+@mixin h5-style {
+    @include heading-style($font-size-lg, $line-height-normal, $font-weight-medium, $letter-spacing-normal);
+}
+
+// H6 样式
+@mixin h6-style {
+    @include heading-style($font-size-md, $line-height-normal, $font-weight-medium, $letter-spacing-wide);
+}
+
+// ==================== 正文样式 Body Styles ====================
+@mixin body-style {
+    font-family: $font-family-base;
+    font-size: $font-size-base;
+    line-height: $line-height-relaxed;
+    font-weight: $font-weight-normal;
+    letter-spacing: $letter-spacing-normal;
+    color: $text-color-primary;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+    font-feature-settings: "kern" 1, "liga" 1;
+}
+
+// ==================== 代码样式 Code Styles ====================
+@mixin code-style {
+    font-family: $font-family-mono;
+    font-size: 0.9em;
+    line-height: $line-height-normal;
+    font-weight: $font-weight-normal;
+    font-feature-settings: "liga" 0;
+    font-variant-ligatures: none;
+}
+
+// ==================== 工具类 Mixins ====================
+// 文本截断
+@mixin text-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+// 多行文本截断
+@mixin text-clamp($lines: 2) {
+    display: -webkit-box;
+    -webkit-line-clamp: $lines;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+// 文本选择样式
+@mixin text-selection {
+    &::selection {
+        background-color: rgba(105, 46, 230, 0.2);
+        color: $text-color-primary;
+    }
+
+    &::-moz-selection {
+        background-color: rgba(105, 46, 230, 0.2);
+        color: $text-color-primary;
+    }
+}

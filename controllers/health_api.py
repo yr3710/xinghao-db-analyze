@@ -3,6 +3,7 @@ from sanic import Blueprint, Request
 
 from common.param_parser import parse_params
 from common.res_decorator import async_json_resp
+from common.token_decorator import check_token
 
 
 bp = Blueprint(
@@ -45,4 +46,13 @@ async def add(
 ):
     return {
         "result": number_a + number_b,
+    }
+
+@bp.get("/protected")
+@check_token
+@async_json_resp
+async def protected(request: Request):
+    return {
+        "message": "鉴权成功",
+        "user": request.ctx.user_payload,
     }

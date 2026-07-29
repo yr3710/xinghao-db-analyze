@@ -53,7 +53,7 @@ onMounted(checkBackend)
 </script>
 
 <template>
-  <main class="page">
+  <main class="min-h-screen bg-[#f5f5f5] grid place-items-center">
     <NCard
       title="Aix-DB Replica"
       class="card"

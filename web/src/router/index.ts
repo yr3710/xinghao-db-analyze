@@ -16,6 +16,11 @@ const router = createRouter({
         '@/views/home.vue'
       ),
     },
+    {
+      path: '/llm-config',
+      name: 'LLMConfig',
+      component: () => import('@/views/system/config/llm-config.vue'),
+    },
   ],
 })
 

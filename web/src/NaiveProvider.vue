@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import {
-  NDialogProvider,
-  NLoadingBarProvider,
-  NMessageProvider,
-  NNotificationProvider,
-} from 'naive-ui'
+function registerNaiveTools() {
+  window.$ModalMessage = useMessage()
+  window.$ModalNotification = useNotification()
+  window.$ModalDialog = useDialog()
+  window.$ModalLoadingBar = useLoadingBar()
+}
+
+const NaiveProviderWrapper = defineComponent({
+  name: 'NaiveProviderWrapper',
+  setup() {
+    registerNaiveTools()
+  },
+  render() {
+    return h('div')
+  },
+})
 </script>
 
 <template>
@@ -12,7 +22,8 @@ import {
     <NDialogProvider>
       <NNotificationProvider>
         <NMessageProvider>
-          <slot />
+          <slot></slot>
+          <NaiveProviderWrapper />
         </NMessageProvider>
       </NNotificationProvider>
     </NDialogProvider>

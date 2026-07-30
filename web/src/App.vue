@@ -19,3 +19,7 @@ import NaiveProvider from './NaiveProvider.vue'
     </NaiveProvider>
   </NConfigProvider>
 </template>
+
+<style lang="scss">
+@use '@/styles/index.scss';
+</style>

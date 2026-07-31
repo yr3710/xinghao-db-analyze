@@ -16,5 +16,8 @@ async function setupApp() {
 
 setupApp()
 
+// 初始化用户状态
+const userStore = useUserStore()
+userStore.init()
 
 export default app

@@ -116,6 +116,16 @@ docker run -d `
 ```powershell
 docker start xinghao-db-postgres
 ```
+删除容器：
+```powershell
+docker rm -f xinghao-db-postgres
+```
+
+查看所有容器：
+
+```powershell
+docker ps -a
+```
 
 验证：
 

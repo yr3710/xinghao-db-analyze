@@ -18,6 +18,14 @@ const routes: RouteRecordRaw[] = [
                 },
             },
             {
+                path: 'chat',
+                name: 'Chat',
+                component: () => import('@/views/chat/index.vue'),
+                meta: {
+                    requiresAuth: true,
+                },
+            },
+            {
                 path: 'llm-config',
                 name: 'LLMConfig',
                 component: () => import('@/views/system/config/llm-config.vue'),

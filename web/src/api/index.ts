@@ -67,3 +67,30 @@ export async function createOllama3Stylized(
     clearTimeout(timeoutId)
   })
 }
+
+export async function stop_chat(
+  task_id,
+  qa_type,
+) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+
+  const url = new URL(
+    `${location.origin}/sanic/dify/stop_chat`,
+  )
+
+  const request = new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      task_id,
+      qa_type,
+    }),
+  })
+
+  return fetch(request)
+}

@@ -133,3 +133,39 @@ class LLMRequest:
 
 
 llm_request = LLMRequest()
+
+async def stop_dify_chat(
+    request,
+    task_id,
+    qa_type,
+) -> dict:
+    token = request.headers.get("Authorization")
+
+    if not token:
+        return {
+            "success": False,
+            "message": "未登录",
+        }
+
+    if token.startswith("Bearer "):
+        token = token.removeprefix("Bearer ")
+
+    if qa_type != "COMMON_QA":
+        return {
+            "success": False,
+            "message": f"暂不支持停止 {qa_type}",
+        }
+
+    user = await decode_jwt_token(token)
+    user_id = user["id"]
+
+    success = await llm_request.cancel_task(user_id)
+
+    return {
+        "success": success,
+        "message": (
+            "任务已停止"
+            if success
+            else "未找到正在执行的任务"
+        ),
+    }

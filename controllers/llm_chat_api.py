@@ -3,8 +3,15 @@ from sanic.response import ResponseStream
 
 from common.param_parser import parse_params
 from common.token_decorator import check_token
-from model.schemas import LLMGetAnswerRequest
-from services.llm_service import llm_request
+from common.res_decorator import async_json_resp
+from model.schemas import (
+    LLMGetAnswerRequest,
+    StopChatRequest,
+)
+from services.llm_service import (
+    llm_request,
+    stop_dify_chat,
+)
 
 bp = Blueprint(
     "difyApi",
@@ -40,4 +47,18 @@ async def get_answer(
             "Cache-Control": "no-cache",
             "X-Accel-Buffering": "no",
         },
+    )
+
+@bp.post("/stop_chat")
+@check_token
+@async_json_resp
+@parse_params
+async def stop_chat(
+    request: Request,
+    body: StopChatRequest,
+):
+    return await stop_dify_chat(
+        request=request,
+        task_id=body.task_id,
+        qa_type=body.qa_type,
     )

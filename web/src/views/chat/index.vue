@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { nextTick, ref } from 'vue'
-import { useRouter } from 'vue-router'
-import { v4 as uuidv4 } from 'uuid'
+import {nextTick, ref} from 'vue'
+import {useRouter} from 'vue-router'
+import {v4 as uuidv4} from 'uuid'
+import * as GlobalAPI from '@/api'
 
 import MarkdownPreview from '@/components/MarkdownPreview/index.vue'
-import { useBusinessStore } from '@/store/business'
+import {useBusinessStore} from '@/store/business'
 
 type StreamReader = ReadableStreamDefaultReader<string>
 
@@ -33,13 +34,13 @@ async function scrollToBottom() {
 
   if (messagesContainer.value) {
     messagesContainer.value.scrollTop
-      = messagesContainer.value.scrollHeight
+        = messagesContainer.value.scrollHeight
   }
 }
 
 function addErrorMessage(
-  uuid: string,
-  message: string,
+    uuid: string,
+    message: string,
 ) {
   conversationItems.value.push({
     uuid,
@@ -50,6 +51,31 @@ function addErrorMessage(
     reader: null,
     error: message,
   })
+}
+
+async function stopGeneration() {
+  if (!generating.value) {
+    return
+  }
+
+  try {
+    const response = await GlobalAPI.stop_chat(
+        businessStore.task_id,
+        'COMMON_QA',
+    )
+
+    if (!response.ok) {
+      throw new Error('停止请求失败')
+    }
+
+    const result = await response.json()
+
+    if (!result.success && !result.data?.success) {
+      console.warn('后端没有找到正在执行的任务')
+    }
+  } catch (error) {
+    console.error('停止生成失败：', error)
+  }
 }
 
 async function handleCreateStylized() {
@@ -76,7 +102,7 @@ async function handleCreateStylized() {
   await scrollToBottom()
 
   const result
-    = await businessStore.createAssistantWriterStylized(
+      = await businessStore.createAssistantWriterStylized(
       questionUuid,
       chatId.value,
       chatId.value,
@@ -91,7 +117,7 @@ async function handleCreateStylized() {
           generating.value = false
         },
       },
-    )
+  )
 
   if (result.needLogin) {
     generating.value = false
@@ -103,8 +129,8 @@ async function handleCreateStylized() {
     generating.value = false
 
     addErrorMessage(
-      questionUuid,
-      result.errorMessage || '没有访问权限',
+        questionUuid,
+        result.errorMessage || '没有访问权限',
     )
 
     await scrollToBottom()
@@ -115,8 +141,8 @@ async function handleCreateStylized() {
     generating.value = false
 
     addErrorMessage(
-      questionUuid,
-      '请求模型失败，请稍后重试',
+        questionUuid,
+        '请求模型失败，请稍后重试',
     )
 
     await scrollToBottom()
@@ -166,8 +192,8 @@ function newChat() {
 
 function onInputKeydown(event: KeyboardEvent) {
   if (
-    event.key === 'Enter'
-    && !event.shiftKey
+      event.key === 'Enter'
+      && !event.shiftKey
   ) {
     event.preventDefault()
     handleCreateStylized()
@@ -181,29 +207,29 @@ function onInputKeydown(event: KeyboardEvent) {
       <h1>Aix-DB</h1>
 
       <button
-        type="button"
-        :disabled="generating"
-        @click="newChat"
+          type="button"
+          :disabled="generating"
+          @click="newChat"
       >
         新建对话
       </button>
     </header>
 
     <section
-      ref="messagesContainer"
-      class="message-list"
+        ref="messagesContainer"
+        class="message-list"
     >
       <div
-        v-if="conversationItems.length === 0"
-        class="empty-message"
+          v-if="conversationItems.length === 0"
+          class="empty-message"
       >
         输入一个问题开始对话
       </div>
 
       <article
-        v-for="(item, index) in conversationItems"
-        :key="`${item.uuid}-${item.role}`"
-        :class="[
+          v-for="(item, index) in conversationItems"
+          :key="`${item.uuid}-${item.role}`"
+          :class="[
           'message-item',
           `message-item--${item.role}`,
         ]"
@@ -213,59 +239,66 @@ function onInputKeydown(event: KeyboardEvent) {
         </div>
 
         <div
-          v-if="item.role === 'user'"
-          class="user-message"
+            v-if="item.role === 'user'"
+            class="user-message"
         >
           {{ item.question }}
         </div>
 
         <div
-          v-else-if="item.error"
-          class="error-message"
+            v-else-if="item.error"
+            class="error-message"
         >
           {{ item.error }}
         </div>
 
         <MarkdownPreview
-          v-else
-          :reader="item.reader"
-          :qa-type="item.qa_type"
-          :is-init="false"
-          model="standard"
-          :parent-scoll-bottom-method="scrollToBottom"
-          @failed="onFailedReader(index)"
-          @completed="onCompletedReader"
-          @begin-read="scrollToBottom"
+            v-else
+            :reader="item.reader"
+            :qa-type="item.qa_type"
+            :is-init="false"
+            model="standard"
+            :parent-scoll-bottom-method="scrollToBottom"
+            @failed="onFailedReader(index)"
+            @completed="onCompletedReader"
+            @begin-read="scrollToBottom"
         />
       </article>
 
       <div
-        v-if="generating"
-        class="loading-message"
+          v-if="generating"
+          class="loading-message"
       >
         模型正在生成……
       </div>
     </section>
 
     <form
-      class="input-area"
-      @submit.prevent="handleCreateStylized"
+        class="input-area"
+        @submit.prevent="handleCreateStylized"
     >
       <textarea
-        v-model="inputTextString"
-        :disabled="generating"
-        placeholder="输入问题，Enter 发送，Shift+Enter 换行"
-        @keydown="onInputKeydown"
+          v-model="inputTextString"
+          :disabled="generating"
+          placeholder="输入问题，Enter 发送，Shift+Enter 换行"
+          @keydown="onInputKeydown"
       />
 
       <button
-        type="submit"
-        :disabled="
-          generating
-            || !inputTextString.trim()
-        "
+          v-if="generating"
+          type="button"
+          class="stop-button"
+          @click="stopGeneration"
       >
-        {{ generating ? '生成中' : '发送' }}
+        停止生成
+      </button>
+
+      <button
+          v-else
+          type="submit"
+          :disabled="!inputTextString.trim()"
+      >
+        发送
       </button>
     </form>
   </main>
@@ -352,5 +385,10 @@ textarea {
 
 button {
   padding: 8px 18px;
+}
+
+.stop-button {
+  color: white;
+  background: #d03050;
 }
 </style>

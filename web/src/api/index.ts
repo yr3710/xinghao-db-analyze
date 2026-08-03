@@ -19,3 +19,51 @@ export async function login(username, password) {
   })
   return fetch(req)
 }
+
+export async function createOllama3Stylized(
+  text,
+  qa_type,
+  uuid,
+  chat_id,
+  file_list,
+  datasource_id,
+  selected_skills?,
+) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+
+  const url = new URL(
+    `${location.origin}/sanic/dify/get_answer`,
+  )
+
+  const controller = new AbortController()
+
+  const timeoutId = setTimeout(() => {
+    controller.abort()
+  }, 36 * 60 * 1000)
+
+  const request = new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({
+      query: text,
+      qa_type,
+      uuid,
+      chat_id,
+      file_list,
+      datasource_id,
+      ...(selected_skills?.length
+        ? { selected_skills }
+        : {}),
+    }),
+    signal: controller.signal,
+  })
+
+  return fetch(request).finally(() => {
+    clearTimeout(timeoutId)
+  })
+}

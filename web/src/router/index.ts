@@ -1,42 +1,14 @@
-import type {App} from 'vue'
+import type { App } from 'vue'
 import {
-    createRouter,
-    createWebHistory,
+  createRouter,
+  createWebHistory,
 } from 'vue-router'
-
+import { useUserStore } from '@/store/business/userStore'
+import routes from './routes'
 
 const router = createRouter({
-    history: createWebHistory(),
-
-    routes: [
-        {
-            path: '/',
-            name: 'Home',
-            component: () => import(
-                '@/views/home.vue'
-                ),
-            meta: {requiresAuth: true}, // 标记需要认证
-        },
-        {
-            path: '/llm-config',
-            name: 'LLMConfig',
-            component: () => import('@/views/system/config/llm-config.vue'),
-            meta: {requiresAuth: true}, // 标记需要认证
-        },
-        {
-            path: '/login',
-            name: 'Login',
-            component: () => import('@/views/auth/login.vue'),
-        },
-        {
-            path: '/user-manager',
-            name: 'UserManager',
-            component: () => import('@/views/user/user-manager.vue'),
-            meta: {
-                requiresAuth: true,
-            },
-        },
-    ],
+  history: createWebHistory(),
+  routes,
 })
 
 // 全局前置守卫
@@ -50,11 +22,9 @@ router.beforeEach((to, from, next) => {
     }
 })
 
-
 export async function setupRouter(app: App) {
-    app.use(router)
-    await router.isReady()
+  app.use(router)
+  await router.isReady()
 }
-
 
 export default router

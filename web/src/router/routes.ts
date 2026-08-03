@@ -31,6 +31,7 @@ const routes: RouteRecordRaw[] = [
                 component: () => import('@/views/user/user-manager.vue'),
                 meta: {
                     requiresAuth: true,
+                    title: '用户管理',
                 },
             },
             {
@@ -39,6 +40,33 @@ const routes: RouteRecordRaw[] = [
                 component: () => import('@/views/dev/sidebar-preview.vue'),
                 meta: {
                     requiresAuth: true,
+                },
+            },
+            {
+                path: 'navigation-preview',
+                name: 'NavigationPreview',
+                component: () => import('@/views/dev/navigation-preview.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: '导航组件验证',
+                },
+            },
+            {
+                path: 'navigation-preview/:previewId',
+                name: 'NavigationPreviewDynamic',
+                component: () => import('@/views/dev/navigation-preview.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: '动态路由验证',
+                },
+            },
+            {
+                path: 'layout-preview',
+                name: 'LayoutPreview',
+                component: () => import('@/views/dev/layout-preview.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: '布局验证',
                 },
             },
         ],

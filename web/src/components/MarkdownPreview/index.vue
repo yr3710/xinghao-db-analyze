@@ -46,7 +46,10 @@ interface Props {
   isView?: boolean
   chartId?: string
   qaType?: string
-  reader?: ReadableStreamDefaultReader<Uint8Array> | null
+  reader?:
+    | ReadableStreamDefaultReader<string>
+    | ReadableStreamDefaultReader<Uint8Array>
+    | null
   model?: TransformStreamModelTypes
   parentScollBottomMethod?: () => void // 父组件滚动方法
   chartData?: { // 图表数据，用于多轮对话数据隔离

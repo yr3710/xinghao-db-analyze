@@ -5,7 +5,10 @@ from langchain_core.messages import HumanMessage
 
 from common.llm_util import get_llm
 from constants.code_enum import DataTypeEnum
-from services.user_service import decode_jwt_token
+from services.user_service import (
+    add_user_record,
+    decode_jwt_token,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +82,13 @@ class LLMRequest:
 
         try:
             query = req_obj["query"]
+            uuid_str = req_obj.get("uuid")
+            chat_id = req_obj.get("chat_id")
+            qa_type = req_obj.get("qa_type", "COMMON_QA")
+            file_list = req_obj.get("file_list") or []
+            datasource_id = req_obj.get("datasource_id")
+
+            answer_chunks = []
 
             await self._send_text(
                 response,
@@ -101,7 +111,41 @@ class LLMRequest:
                 text = self._extract_text(chunk.content)
 
                 if text:
+                    answer_chunks.append(text)
                     await self._send_text(response, text)
+
+            if (
+                not task_context["cancelled"]
+                and uuid_str
+                and chat_id
+            ):
+                try:
+                    record_id = await add_user_record(
+                        uuid_str=uuid_str,
+                        chat_id=chat_id,
+                        question=query,
+                        to2_answer=answer_chunks,
+                        to4_answer={},
+                        qa_type=qa_type,
+                        user_token=token,
+                        file_list=file_list,
+                        datasource_id=datasource_id,
+                    )
+
+                    logger.info(
+                        "普通问答记录保存成功："
+                        "record_id=%s, uuid=%s, chat_id=%s",
+                        record_id,
+                        uuid_str,
+                        chat_id,
+                    )
+                except Exception:
+                    logger.exception(
+                        "普通问答记录保存失败："
+                        "uuid=%s, chat_id=%s",
+                        uuid_str,
+                        chat_id,
+                    )
 
             await self._send_text(
                 response,

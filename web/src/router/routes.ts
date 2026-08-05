@@ -70,6 +70,15 @@ const routes: RouteRecordRaw[] = [
                 },
             },
             {
+                path: 'terminology-config',
+                name: 'TerminologyConfig',
+                component: () => import('@/views/system/config/terminology-config.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: '术语配置',
+                },
+            },
+            {
                 path: 'sidebar-preview',
                 name: 'SidebarPreview',
                 component: () => import('@/views/dev/sidebar-preview.vue'),

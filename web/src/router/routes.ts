@@ -61,6 +61,15 @@ const routes: RouteRecordRaw[] = [
                 },
             },
             {
+                path: 'set/training',
+                name: 'SqlExampleLibrary',
+                component: () => import('@/views/system/config/sql-example-library.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: 'SQL 示例库',
+                },
+            },
+            {
                 path: 'sidebar-preview',
                 name: 'SidebarPreview',
                 component: () => import('@/views/dev/sidebar-preview.vue'),

@@ -79,6 +79,15 @@ const routes: RouteRecordRaw[] = [
                 },
             },
             {
+                path: 'system-settings',
+                name: 'SystemSettings',
+                component: () => import('@/views/system/system-settings.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: '系统设置',
+                },
+            },
+            {
                 path: 'sidebar-preview',
                 name: 'SidebarPreview',
                 component: () => import('@/views/dev/sidebar-preview.vue'),

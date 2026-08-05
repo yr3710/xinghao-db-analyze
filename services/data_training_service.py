@@ -10,6 +10,7 @@ from model.datasource_models import Datasource
 from model.db_connection_pool import get_db_pool
 from model.db_models import TAiModel, TDataTraining
 from model.schemas import DataTrainingItem
+from services.embedding_service import generate_embedding
 
 pool = get_db_pool()
 
@@ -95,6 +96,8 @@ async def create_training(
 
     datasource = data.get("datasource")
     advanced_application = data.get("advanced_application")
+    # Generate embedding - 当前层只使用用户配置的在线模型
+    embedding = await generate_embedding(question)
     with pool.get_session() as session:
         query = session.query(TDataTraining).filter(
             TDataTraining.question == question,
@@ -131,7 +134,7 @@ async def create_training(
                 description=data.get("description"),
                 datasource=datasource,
                 advanced_application=advanced_application,
-                embedding=None,
+                embedding=embedding,
                 enabled=data.get("enabled", True),
                 create_time=datetime.now(),
             )
@@ -144,7 +147,34 @@ async def update_training(
     data: Dict[str, Any],
     oid: int = 1,
 ) -> bool:
+    question = data.get("question")
+
+    with pool.get_session() as session:
+        training_id = data.get("id")
+        training = session.query(TDataTraining).filter(
+            TDataTraining.id == training_id
+        ).first()
+        if not training:
+            raise MyException(
+                SysCodeEnum.PARAM_ERROR,
+                "Training data not found",
+            )
+
+        # Check if question changed to update embedding
+        embedding = None
+        if question and question != training.question:
+            # This should be done outside lock/transaction if possible, but here we are inside session
+            # However, we can just await it? session is not async session, but we are in async function.
+            # Ideally we shouldn't hold db session while doing network request.
+            pass
+
+    # Generate embedding if question changed (outside session)
+    # We need to re-fetch to check? Or just check data.
+    # To avoid complexity, let's query first, check, then generate, then update.
+
+    # Refactored update logic:
     training_id = data.get("id")
+    current_question = None
     with pool.get_session() as session:
         training = session.query(TDataTraining).filter(
             TDataTraining.id == training_id
@@ -155,24 +185,38 @@ async def update_training(
                 "Training data not found",
             )
 
-        question = data.get("question")
-        if question:
-            training.question = question
-        training.description = data.get(
-            "description",
-            training.description,
-        )
-        training.datasource = data.get(
-            "datasource",
-            training.datasource,
-        )
-        training.advanced_application = data.get(
-            "advanced_application",
-            training.advanced_application,
-        )
-        training.enabled = data.get("enabled", training.enabled)
-        session.commit()
-        return True
+        current_question = training.question
+
+    embedding = None
+    if question and question != current_question:
+        # 当前层只使用用户配置的在线模型
+        embedding = await generate_embedding(question)
+
+    with pool.get_session() as session:
+        training = session.query(TDataTraining).filter(
+            TDataTraining.id == training_id
+        ).first()
+        if training:
+            if question:
+                training.question = question
+            if embedding:
+                training.embedding = embedding
+            training.description = data.get(
+                "description",
+                training.description,
+            )
+            training.datasource = data.get(
+                "datasource",
+                training.datasource,
+            )
+            training.advanced_application = data.get(
+                "advanced_application",
+                training.advanced_application,
+            )
+            training.enabled = data.get("enabled", training.enabled)
+            session.commit()
+            return True
+        return False
 
 
 async def delete_training(ids: list[int]) -> bool:

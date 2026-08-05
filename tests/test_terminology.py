@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 from pgvector.sqlalchemy import VECTOR
-from sqlalchemy import BigInteger, create_engine, select
+from sqlalchemy import BigInteger, create_engine, or_, select
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import Session
@@ -64,6 +64,14 @@ def terminology_database(monkeypatch):
         "pool",
         TerminologyPool(engine),
     )
+    async def no_embedding(ids):
+        return None
+
+    monkeypatch.setattr(
+        terminology_service,
+        "save_terminology_embeddings",
+        no_embedding,
+    )
     yield engine
     engine.dispose()
 
@@ -101,6 +109,99 @@ def test_create_and_list_terminology_parent_with_synonyms(
         assert records[0].pid is None
         assert [record.pid for record in records[1:]] == [records[0].id] * 2
         assert all(record.embedding is None for record in records)
+
+
+def test_create_terminology_persists_parent_and_synonym_embeddings(
+    terminology_database,
+    monkeypatch,
+):
+    vectors = {
+        "Sales": [0.1, 0.2],
+        "Revenue": [0.3, 0.4],
+    }
+
+    async def fake_save_embeddings(ids):
+        with terminology_service.pool.get_session() as session:
+            records = session.query(TTerminology).filter(
+                or_(
+                    TTerminology.id.in_(ids),
+                    TTerminology.pid.in_(ids),
+                )
+            ).all()
+            for record in records:
+                record.embedding = vectors[record.word]
+
+    monkeypatch.setattr(
+        terminology_service,
+        "save_terminology_embeddings",
+        fake_save_embeddings,
+    )
+
+    assert asyncio.run(
+        terminology_service.create_terminology(
+            "Sales",
+            "Order revenue",
+            ["Revenue"],
+            False,
+            [],
+        )
+    )
+
+    with Session(terminology_database) as session:
+        records = session.scalars(
+            select(TTerminology).order_by(TTerminology.id)
+        ).all()
+        assert [list(record.embedding) for record in records] == [
+            [0.1, 0.2],
+            [0.3, 0.4],
+        ]
+
+
+def test_online_embedding_worker_matches_source_flow(
+    terminology_database,
+    monkeypatch,
+):
+    with Session(terminology_database) as session:
+        parent = TTerminology(word="Sales", oid=1, enabled=True)
+        session.add(parent)
+        session.flush()
+        session.add(TTerminology(pid=parent.id, word="Revenue", oid=1, enabled=True))
+        session.commit()
+        parent_id = parent.id
+
+    async def fake_model():
+        return {
+            "supplier": 3,
+            "api_key": "key",
+            "api_domain": "http://localhost:11434",
+            "base_model": "embedding-model",
+        }
+
+    class Embeddings:
+        def create(self, model, input):
+            assert model == "embedding-model"
+            vectors = {"Sales": [0.1, 0.2], "Revenue": [0.3, 0.4]}
+            return SimpleNamespace(data=[SimpleNamespace(embedding=vectors[input])])
+
+    class Client:
+        def __init__(self, api_key, base_url):
+            assert api_key == "key"
+            assert base_url == "http://localhost:11434/v1"
+            self.embeddings = Embeddings()
+
+    import openai
+
+    monkeypatch.setattr(terminology_service, "get_default_embedding_model", fake_model)
+    monkeypatch.setattr(openai, "OpenAI", Client)
+
+    terminology_service._save_terminology_embeddings_sync([parent_id])
+
+    with Session(terminology_database) as session:
+        records = session.scalars(select(TTerminology).order_by(TTerminology.id)).all()
+        assert [list(record.embedding) for record in records] == [
+            [0.1, 0.2],
+            [0.3, 0.4],
+        ]
 
 
 def test_search_by_synonym_returns_parent_and_datasource_names(

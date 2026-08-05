@@ -68,6 +68,14 @@ def training_database(monkeypatch):
         "pool",
         TrainingPool(engine),
     )
+    async def no_embedding(text):
+        return None
+
+    monkeypatch.setattr(
+        data_training_service,
+        "generate_embedding",
+        no_embedding,
+    )
     with Session(engine) as session:
         session.add(
             Datasource(
@@ -129,6 +137,90 @@ def test_create_and_page_training_without_embedding(training_database):
     with Session(training_database) as session:
         record = session.scalar(select(TDataTraining))
         assert record.embedding is None
+
+
+def test_create_training_persists_online_embedding(
+    training_database,
+    monkeypatch,
+):
+    async def fake_generate_embedding(text):
+        assert text == "Monthly revenue?"
+        return [0.1, 0.2, 0.3]
+
+    monkeypatch.setattr(
+        data_training_service,
+        "generate_embedding",
+        fake_generate_embedding,
+    )
+
+    assert asyncio.run(
+        data_training_service.create_training(
+            {
+                "question": "Monthly revenue?",
+                "description": "select sum(amount) from orders",
+                "datasource": 10,
+                "enabled": True,
+            }
+        )
+    )
+
+    with Session(training_database) as session:
+        record = session.scalar(select(TDataTraining))
+        assert list(record.embedding) == [0.1, 0.2, 0.3]
+
+
+def test_update_training_only_recalculates_changed_question(
+    training_database,
+    monkeypatch,
+):
+    calls = []
+
+    async def fake_generate_embedding(text):
+        calls.append(text)
+        return [0.4, 0.5]
+
+    monkeypatch.setattr(
+        data_training_service,
+        "generate_embedding",
+        fake_generate_embedding,
+    )
+    assert asyncio.run(
+        data_training_service.create_training(
+            {
+                "question": "Old question",
+                "description": "select 1",
+                "datasource": 10,
+            }
+        )
+    )
+    with Session(training_database) as session:
+        training_id = session.scalar(select(TDataTraining.id))
+
+    calls.clear()
+    assert asyncio.run(
+        data_training_service.update_training(
+            {
+                "id": training_id,
+                "question": "Old question",
+                "description": "select 2",
+            }
+        )
+    )
+    assert calls == []
+
+    assert asyncio.run(
+        data_training_service.update_training(
+            {
+                "id": training_id,
+                "question": "New question",
+                "description": "select 3",
+            }
+        )
+    )
+    assert calls == ["New question"]
+    with Session(training_database) as session:
+        record = session.get(TDataTraining, training_id)
+        assert list(record.embedding) == [0.4, 0.5]
 
 
 def test_create_training_keeps_source_validation_and_duplicate_scope(

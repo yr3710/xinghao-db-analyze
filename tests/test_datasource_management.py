@@ -38,7 +38,7 @@ def compile_big_integer_as_integer(element, compiler, **kwargs):
 
 
 @pytest.fixture
-def session():
+def session(monkeypatch):
     engine = create_engine(
         "sqlite://",
         connect_args={"check_same_thread": False},
@@ -53,6 +53,12 @@ def session():
             DatasourceField.__table__,
             DatasourceAuth.__table__,
         ],
+    )
+    monkeypatch.setattr(
+        DatasourceService,
+        "_get_embedding_client",
+        staticmethod(lambda: (None, None)),
+        raising=False,
     )
     with Session(engine) as db_session:
         yield db_session
@@ -930,6 +936,61 @@ def test_schema_metadata_edits_only_supported_fields(session):
     assert field.field_type == "bigint"
     assert field.custom_comment == "User ID"
     assert field.checked is False
+
+
+def test_schema_sync_persists_table_document_embedding(session, monkeypatch):
+    datasource = create_datasource(session)
+    source_tables = [
+        {"tableName": "orders", "tableComment": "Orders"},
+    ]
+    source_fields = [
+        {
+            "fieldName": "amount",
+            "fieldType": "numeric",
+            "fieldComment": "Order amount",
+            "fieldIndex": 0,
+        }
+    ]
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "get_tables",
+        lambda ds_type, config: source_tables,
+    )
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "get_fields",
+        lambda ds_type, config, table_name: source_fields,
+    )
+
+    captured = {}
+
+    class FakeEmbeddings:
+        def create(self, *, model, input):
+            captured.update(model=model, input=input)
+            return SimpleNamespace(
+                data=[SimpleNamespace(embedding=[0.1, 0.2])]
+            )
+
+    fake_client = SimpleNamespace(embeddings=FakeEmbeddings())
+    monkeypatch.setattr(
+        DatasourceService,
+        "_get_embedding_client",
+        staticmethod(lambda: (fake_client, "embedding-model")),
+    )
+
+    assert DatasourceService.sync_tables(
+        session,
+        datasource.id,
+        source_tables,
+        True,
+    )
+
+    table = session.scalar(select(DatasourceTable))
+    assert captured == {
+        "model": "embedding-model",
+        "input": ["orders Orders amount Order amount"],
+    }
+    assert json.loads(table.embedding) == [0.1, 0.2]
 
 
 def test_schema_browse_http_routes_match_source_contract():

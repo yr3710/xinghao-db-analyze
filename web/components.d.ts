@@ -8,6 +8,8 @@ export {}
 /* prettier-ignore */
 declare module 'vue' {
   export interface GlobalComponents {
+    DatasourceAuthModal: typeof import('./src/components/datasource/datasource-auth-modal.vue')['default']
+    DatasourceForm: typeof import('./src/components/datasource/datasource-form.vue')['default']
     IconifyIcon: typeof import('./src/components/IconifyIcon/index.vue')['default']
     LayoutDefault: typeof import('./src/components/Layout/default.vue')['default']
     LayoutSidebarPage: typeof import('./src/components/Layout/sidebar-page.vue')['default']
@@ -18,6 +20,7 @@ declare module 'vue' {
     MarkdownPreview: typeof import('./src/components/MarkdownPreview/index.vue')['default']
     MarkdownPreviewHtmlReportViewer: typeof import('./src/components/MarkdownPreview/HtmlReportViewer.vue')['default']
     MarkdownPreviewMarkdownAntv: typeof import('./src/components/MarkdownPreview/markdown-antv.vue')['default']
+    NAlert: typeof import('naive-ui')['NAlert']
     NavigationNavBar: typeof import('./src/components/Navigation/nav-bar.vue')['default']
     NavigationNavFooter: typeof import('./src/components/Navigation/nav-footer.vue')['default']
     NavigationNavOctocat: typeof import('./src/components/Navigation/nav-octocat.vue')['default']
@@ -25,6 +28,8 @@ declare module 'vue' {
     NavigationSideBar: typeof import('./src/components/Navigation/SideBar.vue')['default']
     NButton: typeof import('naive-ui')['NButton']
     NCard: typeof import('naive-ui')['NCard']
+    NCheckbox: typeof import('naive-ui')['NCheckbox']
+    NCheckboxGroup: typeof import('naive-ui')['NCheckboxGroup']
     NDataTable: typeof import('naive-ui')['NDataTable']
     NDialogProvider: typeof import('naive-ui')['NDialogProvider']
     NDivider: typeof import('naive-ui')['NDivider']
@@ -33,10 +38,12 @@ declare module 'vue' {
     NEmpty: typeof import('naive-ui')['NEmpty']
     NForm: typeof import('naive-ui')['NForm']
     NFormItem: typeof import('naive-ui')['NFormItem']
+    NFormItemGi: typeof import('naive-ui')['NFormItemGi']
     NGrid: typeof import('naive-ui')['NGrid']
     NGridItem: typeof import('naive-ui')['NGridItem']
     NIcon: typeof import('naive-ui')['NIcon']
     NInput: typeof import('naive-ui')['NInput']
+    NInputNumber: typeof import('naive-ui')['NInputNumber']
     NLoadingBarProvider: typeof import('naive-ui')['NLoadingBarProvider']
     NMessageProvider: typeof import('naive-ui')['NMessageProvider']
     NModal: typeof import('naive-ui')['NModal']

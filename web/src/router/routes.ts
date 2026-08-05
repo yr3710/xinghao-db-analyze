@@ -43,6 +43,15 @@ const routes: RouteRecordRaw[] = [
                 },
             },
             {
+                path: 'datasource',
+                name: 'DatasourceManager',
+                component: () => import('@/views/datasource/datasource-manager.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: '数据源管理',
+                },
+            },
+            {
                 path: 'sidebar-preview',
                 name: 'SidebarPreview',
                 component: () => import('@/views/dev/sidebar-preview.vue'),

@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy.pool import StaticPool
 
 import common.datasource_util as datasource_util
+import controllers.datasource_api as datasource_api
 import services.datasource_service as datasource_service_module
 import services.user_service as user_service
 from common.datasource_util import (
@@ -679,3 +680,456 @@ def test_admin_guard_uses_source_user_info(monkeypatch):
                 fromlist=["check_admin_permission"],
             ).check_admin_permission(request)
         )
+
+
+def test_postgresql_schema_browse_normalizes_tables_and_fields(monkeypatch):
+    executed = []
+
+    class FakeResult:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params):
+            executed.append((str(statement), params))
+            if "pg_attribute" in str(statement):
+                return FakeResult([(b"id", b"bigint", b"primary key")])
+            return FakeResult([(b"users", b"user table")])
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(
+        datasource_util,
+        "create_engine",
+        lambda *args, **kwargs: FakeEngine(),
+    )
+
+    tables = DatasourceConnectionUtil.get_tables("pg", pg_config())
+    fields = DatasourceConnectionUtil.get_fields(
+        "pg",
+        pg_config(),
+        "users",
+    )
+
+    assert tables == [
+        {"tableName": "users", "tableComment": "user table"}
+    ]
+    assert fields == [
+        {
+            "fieldName": "id",
+            "fieldType": "bigint",
+            "fieldComment": "primary key",
+            "fieldIndex": 0,
+        }
+    ]
+    assert executed[0][1] == {"param": "public"}
+    assert executed[1][1] == {"param1": "public", "param2": "users"}
+
+
+def test_elasticsearch_schema_browse_uses_indices_and_mapping(monkeypatch):
+    class FakeIndices:
+        def get_mapping(self, index):
+            assert index == "orders"
+            return {
+                "orders": {
+                    "mappings": {
+                        "_meta": {"description": "order index"},
+                        "properties": {
+                            "id": {
+                                "type": "long",
+                                "_meta": {"description": "order id"},
+                            }
+                        },
+                    }
+                }
+            }
+
+    class FakeCat:
+        def indices(self, format):
+            assert format == "json"
+            return [{"index": "orders"}]
+
+    fake_client = SimpleNamespace(cat=FakeCat(), indices=FakeIndices())
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "_get_es_connect",
+        lambda config: fake_client,
+    )
+
+    assert DatasourceConnectionUtil.get_tables("es", {}) == [
+        {"tableName": "orders", "tableComment": "order index"}
+    ]
+    assert DatasourceConnectionUtil.get_fields("es", {}, "orders") == [
+        {
+            "fieldName": "id",
+            "fieldType": "long",
+            "fieldComment": "order id",
+            "fieldIndex": 0,
+        }
+    ]
+
+
+def test_schema_sync_persists_and_refreshes_selected_metadata(
+    session,
+    monkeypatch,
+):
+    datasource = create_datasource(session)
+    session.flush()
+    source_tables = [
+        {"tableName": "users", "tableComment": "Users"},
+        {"tableName": "orders", "tableComment": "Orders"},
+    ]
+    source_fields = {
+        "users": [
+            {
+                "fieldName": "id",
+                "fieldType": "bigint",
+                "fieldComment": "User ID",
+                "fieldIndex": 0,
+            }
+        ],
+        "orders": [
+            {
+                "fieldName": "id",
+                "fieldType": "bigint",
+                "fieldComment": "Order ID",
+                "fieldIndex": 0,
+            }
+        ],
+    }
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "get_tables",
+        lambda ds_type, config: source_tables,
+    )
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "get_fields",
+        lambda ds_type, config, table_name: source_fields[table_name],
+    )
+
+    assert DatasourceService.sync_tables(
+        session,
+        datasource.id,
+        source_tables,
+        True,
+    )
+    assert datasource.num == "2/2"
+    assert [row.table_name for row in DatasourceService.get_tables_by_ds_id(
+        session,
+        datasource.id,
+    )] == ["users", "orders"]
+
+    users = session.query(DatasourceTable).filter_by(
+        ds_id=datasource.id,
+        table_name="users",
+    ).one()
+    user_id = session.query(DatasourceField).filter_by(
+        table_id=users.id,
+        field_name="id",
+    ).one()
+    users.custom_comment = "Business users"
+    user_id.custom_comment = "Business user ID"
+    source_tables[0]["tableComment"] = "Updated users"
+    source_fields["users"] = [
+        {
+            "fieldName": "email",
+            "fieldType": "varchar",
+            "fieldComment": "Email",
+            "fieldIndex": 0,
+        }
+    ]
+
+    assert DatasourceService.sync_tables(
+        session,
+        datasource.id,
+        [source_tables[0]],
+        False,
+    )
+
+    remaining_tables = DatasourceService.get_tables_by_ds_id(
+        session,
+        datasource.id,
+    )
+    assert [row.table_name for row in remaining_tables] == ["users"]
+    assert remaining_tables[0].table_comment == "Updated users"
+    assert remaining_tables[0].custom_comment == "Business users"
+    remaining_fields = DatasourceService.get_fields_by_table_id(
+        session,
+        users.id,
+    )
+    assert [row.field_name for row in remaining_fields] == ["email"]
+    assert datasource.num == "1/2"
+
+
+def test_empty_schema_sync_keeps_source_cleanup_boundary(session, monkeypatch):
+    datasource = create_datasource(session)
+    table = DatasourceTable(
+        ds_id=datasource.id,
+        table_name="users",
+        checked=True,
+    )
+    session.add(table)
+    session.flush()
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "get_tables",
+        lambda ds_type, config: [{"tableName": "users"}],
+    )
+
+    assert DatasourceService.sync_tables(session, datasource.id, [], False)
+    assert session.get(DatasourceTable, table.id) is table
+    assert datasource.num == "0/1"
+
+
+def test_schema_metadata_edits_only_supported_fields(session):
+    datasource = create_datasource(session)
+    table = DatasourceTable(
+        ds_id=datasource.id,
+        table_name="users",
+        table_comment="Users",
+        custom_comment="Users",
+        checked=True,
+    )
+    session.add(table)
+    session.flush()
+    field = DatasourceField(
+        ds_id=datasource.id,
+        table_id=table.id,
+        field_name="id",
+        field_type="bigint",
+        custom_comment="ID",
+        checked=True,
+    )
+    session.add(field)
+    session.flush()
+
+    assert DatasourceService.save_table(
+        session,
+        {"id": table.id, "table_name": "renamed", "custom_comment": "Business users", "checked": False},
+    )
+    assert table.table_name == "users"
+    assert table.custom_comment == "Business users"
+    assert table.checked is False
+
+    assert DatasourceService.save_field(
+        session,
+        {"id": field.id, "field_type": "text", "custom_comment": "User ID", "checked": False},
+    )
+    assert field.field_type == "bigint"
+    assert field.custom_comment == "User ID"
+    assert field.checked is False
+
+
+def test_schema_browse_http_routes_match_source_contract():
+    routes = {
+        (route.uri, tuple(sorted(route.methods)))
+        for route in datasource_api.bp._future_routes
+    }
+
+    assert {
+        ("/getTablesByConf", ("POST",)),
+        ("/getFieldsByConf", ("POST",)),
+        ("/syncTables/<ds_id:int>", ("POST",)),
+        ("/tableList/<ds_id:int>", ("POST",)),
+        ("/fieldList/<table_id:int>", ("POST",)),
+        ("/saveTable", ("POST",)),
+        ("/saveField", ("POST",)),
+    }.issubset(routes)
+
+
+@pytest.mark.parametrize(
+    ("ds_type", "table_token", "field_token"),
+    [
+        ("mysql", "information_schema.TABLES", "INFORMATION_SCHEMA.COLUMNS"),
+        ("pg", "pg_class", "pg_catalog.pg_attribute"),
+        ("oracle", "ALL_TABLES", "ALL_TAB_COLUMNS"),
+        ("sqlServer", "INFORMATION_SCHEMA.TABLES", "INFORMATION_SCHEMA.COLUMNS"),
+        ("ck", "system.tables", "system.columns"),
+        ("dm", "all_tab_comments", "ALL_TAB_COLS"),
+        ("doris", "information_schema.TABLES", "INFORMATION_SCHEMA.COLUMNS"),
+        ("starrocks", "information_schema.TABLES", "INFORMATION_SCHEMA.COLUMNS"),
+        ("redshift", "pg_class", "pg_catalog.pg_attribute"),
+        ("kingbase", "pg_class", "pg_catalog.pg_attribute"),
+        ("es", "", ""),
+    ],
+)
+def test_all_layer_nine_database_types_have_schema_branches(
+    ds_type,
+    table_token,
+    field_token,
+):
+    config = pg_config()
+    table_sql, _ = DatasourceConnectionUtil._get_table_sql(ds_type, config)
+    field_sql, _, _ = DatasourceConnectionUtil._get_field_sql(
+        ds_type,
+        config,
+        "users",
+    )
+
+    assert table_token in table_sql
+    assert field_token in field_sql
+
+
+def test_schema_services_parse_configuration_and_missing_source(
+    session,
+    monkeypatch,
+):
+    captured = {}
+
+    def get_tables(ds_type, config):
+        captured.update(config)
+        return [{"tableName": "users", "tableComment": "Users"}]
+
+    monkeypatch.setattr(DatasourceConnectionUtil, "get_tables", get_tables)
+
+    assert DatasourceService.get_tables_by_config(
+        "pg",
+        json.dumps(pg_config()),
+    )[0]["tableName"] == "users"
+    assert captured == pg_config()
+    assert not DatasourceService.sync_tables(session, 99999, [], False)
+
+
+@pytest.mark.parametrize(
+    "ds_type",
+    ["mysql", "pg", "oracle", "sqlServer", "ck"],
+)
+def test_sqlalchemy_schema_public_interface_for_every_source_type(
+    monkeypatch,
+    ds_type,
+):
+    class FakeResult:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, statement, params):
+            sql = str(statement).lower()
+            is_field = any(token in sql for token in (
+                "columns",
+                "pg_attribute",
+                "all_tab_columns",
+            ))
+            if is_field:
+                return FakeResult([("id", "bigint", "Identifier")])
+            return FakeResult([("users", "Users")])
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    monkeypatch.setattr(
+        datasource_util,
+        "create_engine",
+        lambda *args, **kwargs: FakeEngine(),
+    )
+    config = pg_config()
+
+    assert DatasourceConnectionUtil.get_tables(ds_type, config) == [
+        {"tableName": "users", "tableComment": "Users"}
+    ]
+    assert DatasourceConnectionUtil.get_fields(
+        ds_type,
+        config,
+        "users",
+    ) == [
+        {
+            "fieldName": "id",
+            "fieldType": "bigint",
+            "fieldComment": "Identifier",
+            "fieldIndex": 0,
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("ds_type", "driver_name"),
+    [
+        ("dm", "dmPython"),
+        ("doris", "pymysql"),
+        ("starrocks", "pymysql"),
+        ("redshift", "redshift_connector"),
+        ("kingbase", "psycopg2"),
+    ],
+)
+def test_native_schema_public_interface_for_every_source_type(
+    monkeypatch,
+    ds_type,
+    driver_name,
+):
+    class FakeCursor:
+        def __init__(self):
+            self.rows = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, sql, *args, **kwargs):
+            normalized = sql.lower()
+            is_field = any(token in normalized for token in (
+                "columns",
+                "pg_attribute",
+                "all_tab_cols",
+            ))
+            self.rows = (
+                [("id", "bigint", "Identifier")]
+                if is_field
+                else [("users", "Users")]
+            )
+
+        def fetchall(self):
+            return self.rows
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def cursor(self):
+            return FakeCursor()
+
+    fake_driver = SimpleNamespace(connect=lambda **kwargs: FakeConnection())
+    monkeypatch.setattr(datasource_util, driver_name, fake_driver)
+    config = pg_config()
+
+    assert DatasourceConnectionUtil.get_tables(ds_type, config) == [
+        {"tableName": "users", "tableComment": "Users"}
+    ]
+    assert DatasourceConnectionUtil.get_fields(
+        ds_type,
+        config,
+        "users",
+    ) == [
+        {
+            "fieldName": "id",
+            "fieldType": "bigint",
+            "fieldComment": "Identifier",
+            "fieldIndex": 0,
+        }
+    ]

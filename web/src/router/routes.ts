@@ -52,6 +52,15 @@ const routes: RouteRecordRaw[] = [
                 },
             },
             {
+                path: 'datasource/table/:dsId/:dsName',
+                name: 'DatasourceTableList',
+                component: () => import('@/views/datasource/datasource-table-list.vue'),
+                meta: {
+                    requiresAuth: true,
+                    title: 'Schema 浏览',
+                },
+            },
+            {
                 path: 'sidebar-preview',
                 name: 'SidebarPreview',
                 component: () => import('@/views/dev/sidebar-preview.vue'),

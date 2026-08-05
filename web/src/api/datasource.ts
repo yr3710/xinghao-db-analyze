@@ -149,3 +149,104 @@ export async function authorize_datasource(datasourceId: number, userIds: number
   })
   return fetch(req)
 }
+
+export async function fetch_datasource_table_list(dsId: number | string) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/tableList/${dsId}`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: { Authorization: `Bearer ${token}` },
+  }))
+}
+
+export async function fetch_datasource_field_list(tableId: number | string) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/fieldList/${tableId}`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: { Authorization: `Bearer ${token}` },
+  }))
+}
+
+export async function fetch_tables_by_conf(data: any) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/getTablesByConf`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  }))
+}
+
+export async function fetch_fields_by_conf(data: any) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/getFieldsByConf`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(data),
+  }))
+}
+
+export async function sync_datasource_tables(
+  dsId: number | string,
+  tables: any[],
+  isSelectAll = false,
+) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/syncTables/${dsId}`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify({ tables, is_select_all: isSelectAll }),
+  }))
+}
+
+export async function save_datasource_table(tableData: any) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/saveTable`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(tableData),
+  }))
+}
+
+export async function save_datasource_field(fieldData: any) {
+  const userStore = useUserStore()
+  const token = userStore.getUserToken()
+  const url = new URL(`${location.origin}/sanic/datasource/saveField`)
+  return fetch(new Request(url, {
+    mode: 'cors',
+    method: 'post',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${token}`,
+    },
+    body: JSON.stringify(fieldData),
+  }))
+}

@@ -2,6 +2,7 @@
 import type { DataTableColumns } from 'naive-ui'
 import { NButton, NSpace, NTag } from 'naive-ui'
 import { computed, h, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   delete_datasource,
   fetch_datasource_detail,
@@ -29,6 +30,7 @@ interface DatasourceDetail extends DatasourceItem {
 }
 
 const userStore = useUserStore()
+const router = useRouter()
 const message = useMessage()
 const dialog = useDialog()
 const loading = ref(false)
@@ -144,7 +146,14 @@ function authorizeDatasource(item: DatasourceItem) {
 
 const columns = computed<DataTableColumns<DatasourceItem>>(() => {
   const base: DataTableColumns<DatasourceItem> = [
-    { title: '名称', key: 'name', minWidth: 150 },
+    {
+      title: '名称', key: 'name', minWidth: 150,
+      render: row => h(NButton, {
+        text: true,
+        type: 'primary',
+        onClick: () => router.push(`/datasource/table/${row.id}/${encodeURIComponent(row.name)}`),
+      }, { default: () => row.name }),
+    },
     {
       title: '类型', key: 'type_name', width: 150,
       render: row => h('div', { class: 'datasource-type' }, [

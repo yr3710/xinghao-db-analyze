@@ -1,61 +1,33 @@
-<script setup lang="ts">
+<script lang="ts" setup>
 import type { FormInst, FormRules } from 'naive-ui'
 import { computed, reactive, ref, watch } from 'vue'
+import { useDialog } from 'naive-ui'
+import { useInfiniteScroll } from '@vueuse/core'
 import {
   add_datasource,
   check_datasource_connection,
+  fetch_datasource_detail,
+  fetch_datasource_table_list,
+  fetch_tables_by_conf,
+  sync_datasource_tables,
   update_datasource,
 } from '@/api/datasource'
 
-interface DatasourceConfiguration {
-  host: string
-  port: number
-  username: string
-  password: string
-  database: string
-  dbSchema: string
-  extraJdbc: string
-  timeout: number
-  mode: string
-}
-
-interface DatasourceDetail {
-  id: number
-  name: string
-  description?: string
-  type: string
-  type_name?: string
-  configuration: string
-}
-
-interface SaveDatasourcePayload {
-  name: string
-  description?: string
-  type: string
-  type_name: string
-  configuration: string
-}
+const dialog = useDialog()
 
 interface Props {
   show: boolean
-  datasource?: DatasourceDetail | null
+  datasource?: any
 }
 
-const props = withDefaults(defineProps<Props>(), { datasource: null })
-const emit = defineEmits<{
-  'update:show': [value: boolean]
-  'success': []
-}>()
+const props = withDefaults(defineProps<Props>(), {
+  show: false,
+  datasource: null,
+})
 
-const message = useMessage()
-const formRef = ref<FormInst | null>(null)
-const saving = ref(false)
-const testing = ref(false)
-const connectionVerified = ref(false)
+const emit = defineEmits(['update:show', 'success'])
 
-// { label: 'AWS Redshift', value: 'redshift' },
-// { label: 'Elasticsearch', value: 'es' },
-// { label: 'Kingbase', value: 'kingbase' },
+// 数据源类型选项
 const datasourceTypes = [
   { label: 'MySQL', value: 'mysql' },
   { label: 'PostgreSQL', value: 'pg' },
@@ -64,207 +36,1119 @@ const datasourceTypes = [
   { label: 'ClickHouse', value: 'ck' },
   { label: '达梦', value: 'dm' },
   { label: 'Apache Doris', value: 'doris' },
+  { label: 'AWS Redshift', value: 'redshift' },
+  { label: 'Elasticsearch', value: 'es' },
+  { label: 'Kingbase', value: 'kingbase' },
   { label: 'StarRocks', value: 'starrocks' },
 ]
 
+// 需要 Schema 的数据源类型
 const needSchemaTypes = ['sqlServer', 'pg', 'oracle', 'dm', 'redshift', 'kingbase']
-const defaultPorts: Record<string, number> = {
-  mysql: 3306,
-  pg: 5432,
-  oracle: 1521,
-  sqlServer: 1433,
-  ck: 8123,
-  dm: 5236,
-  doris: 9030,
-  redshift: 5439,
-  es: 9200,
-  kingbase: 54321,
-  starrocks: 9030,
-}
 
+// 表单引用
+const formRef = ref<FormInst | null>(null)
+
+// 表单数据
 const formData = reactive({
-  name: '', description: '', type: 'mysql',
-  host: '', port: 3306, username: '', password: '',
-  database: '', dbSchema: '', extraJdbc: '', timeout: 30,
-  mode: 'service_name',
+  name: '',
+  description: '',
+  type: 'mysql',
+  host: '',
+  port: 3306,
+  username: '',
+  password: '',
+  database: '',
+  dbSchema: '',
+  extraJdbc: '',
+  timeout: 30,
+  mode: 'service_name', // Oracle 连接模式
 })
 
+// 表单验证规则
 const rules: FormRules = {
-  name: { required: true, message: '请输入数据源名称', trigger: 'blur' },
-  type: { required: true, message: '请选择数据源类型', trigger: 'change' },
-  host: { required: true, message: '请输入主机地址', trigger: 'blur' },
-  port: { required: true, type: 'number', message: '请输入端口', trigger: 'blur' },
-  database: { required: true, message: '请输入数据库名', trigger: 'blur' },
-  dbSchema: { required: true, message: '请输入 Schema', trigger: 'blur' },
+  name: [
+    { required: true, message: '请输入数据源名称', trigger: 'blur' },
+    {
+      validator: (rule: any, value: string) => {
+        if (!value) {
+          return true
+        }
+        if (value.length < 1 || value.length > 50) {
+          return new Error('名称长度在1-50个字符')
+        }
+        return true
+      },
+      trigger: 'blur',
+    },
+  ],
+  type: [
+    { required: true, message: '请选择数据源类型', trigger: 'change' },
+  ],
+  host: [
+    { required: true, message: '请输入主机地址', trigger: 'blur' },
+  ],
+  port: [
+    {
+      validator: (rule: any, value: any) => {
+        if (value === null || value === undefined || value === '' || value === 0) {
+          return new Error('请输入端口号')
+        }
+        const num = Number(value)
+        if (Number.isNaN(num)) {
+          return new Error('请输入有效的端口号')
+        }
+        if (num < 1 || num > 65535) {
+          return new Error('端口号范围1-65535')
+        }
+        return true
+      },
+      trigger: ['blur', 'input'],
+    },
+  ],
+  database: [
+    { required: true, message: '请输入数据库名', trigger: 'blur' },
+  ],
+  dbSchema: [
+    { required: true, message: '请输入Schema', trigger: 'blur' },
+  ],
 }
 
-const modalTitle = computed(() => props.datasource
-  ? '编辑数据源'
-  : '新增数据源')
+// 状态
+const loading = ref(false)
+const testing = ref(false)
+const currentStep = ref(1) // 1: 基本信息, 2: 选择表
+const tableList = ref<any[]>([]) // 所有表数据（已加载的）
+const selectedTables = ref<string[]>([])
+const tableListLoading = ref(false)
+// 搜索和无限滚动
+const searchKeyword = ref('')
+const displayedTableCount = ref(50) // 初始显示50个表
+const pageSize = ref(50) // 每次加载50个表
+const isLoadingMore = ref(false)
+const hasMoreTables = ref(true)
+const tableListScrollRef = ref<HTMLElement | null>(null)
+// 是否全选标识
+const isSelectAll = ref(false)
+
+// 是否显示 Schema 字段
 const showSchema = computed(() => needSchemaTypes.includes(formData.type))
+
+// 是否显示 Oracle 连接模式
 const showOracleMode = computed(() => formData.type === 'oracle')
-const modalShow = computed({
-  get: () => props.show,
-  set: value => emit('update:show', value),
+
+// 监听数据源类型变化，设置默认端口
+watch(() => formData.type, (newType) => {
+  const defaultPorts: Record<string, number> = {
+    mysql: 3306,
+    pg: 5432,
+    oracle: 1521,
+    sqlServer: 1433,
+    ck: 8123,
+    dm: 5236,
+    doris: 9030,
+    redshift: 5439,
+    es: 9200,
+    kingbase: 54321,
+    starrocks: 9030,
+  }
+  if (defaultPorts[newType]) {
+    formData.port = defaultPorts[newType]
+  }
 })
 
-function resetForm() {
-  Object.assign(formData, {
-    name: '', description: '', type: 'mysql', host: '', port: 3306,
-    username: '', password: '', database: '', dbSchema: '',
-    extraJdbc: '', timeout: 30, mode: 'service_name',
-  })
-  connectionVerified.value = false
-  if (!props.datasource)
-    return
+// 初始化表单
+const initForm = async () => {
+  if (props.datasource) {
+    // 编辑模式
+    formData.name = props.datasource.name || ''
+    formData.description = props.datasource.description || ''
+    formData.type = props.datasource.type || 'mysql'
 
-  formData.name = props.datasource.name
-  formData.description = props.datasource.description ?? ''
-  formData.type = props.datasource.type || 'mysql'
-  try {
-    const config = JSON.parse(props.datasource.configuration) as Partial<DatasourceConfiguration>
-    formData.host = config.host ?? ''
-    formData.port = Number(config.port ?? defaultPorts[formData.type] ?? 3306)
-    formData.username = config.username ?? ''
-    formData.password = config.password ?? ''
-    formData.database = config.database ?? ''
-    formData.dbSchema = config.dbSchema ?? ''
-    formData.extraJdbc = config.extraJdbc ?? ''
-    formData.timeout = Number(config.timeout ?? 30)
-    formData.mode = config.mode ?? 'service_name'
+    try {
+      const response = await fetch_datasource_detail(props.datasource.id)
+      if (response.ok) {
+        const result = await response.json()
+        if (result.code === 200 && result.data) {
+          const data = result.data
+          formData.name = data.name
+          formData.description = data.description
+          formData.type = data.type
+          if (data.configuration) {
+            try {
+              const config = JSON.parse(data.configuration)
+              Object.assign(formData, config)
+            } catch (e) {
+              console.error('解析配置信息失败:', e)
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('获取数据源详情失败:', error)
+    }
+  } else {
+    // 新建模式
+    Object.assign(formData, {
+      name: '',
+      description: '',
+      type: 'mysql',
+      host: '',
+      port: 3306,
+      username: '',
+      password: '',
+      database: '',
+      dbSchema: '',
+      extraJdbc: '',
+      timeout: 30,
+      mode: 'service_name',
+    })
   }
-  catch {
-    message.error('数据源配置格式错误')
+  currentStep.value = 1
+  selectedTables.value = []
+  tableList.value = []
+  searchKeyword.value = ''
+  displayedTableCount.value = pageSize.value
+  hasMoreTables.value = true
+  isLoadingMore.value = false
+  isSelectAll.value = false
+}
+
+// 测试连接
+const testConnection = async () => {
+  if (!formRef.value) {
+    return
+  }
+  await formRef.value.validate((errors) => {
+    if (errors) {
+      window.$ModalMessage.error('请检查表单信息')
+      return false
+    }
+  })
+
+  testing.value = true
+  try {
+    const config = buildConfiguration()
+    const response = await check_datasource_connection({
+      id: props.datasource?.id,
+      type: formData.type,
+      configuration: JSON.stringify(config),
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const result = await response.json()
+    if (result.code === 200 && result.data?.connected) {
+      window.$ModalMessage.success('连接成功')
+      await fetchTableList()
+    } else {
+      window.$ModalMessage.error(result.data?.error_message || '连接失败')
+    }
+  } catch (error) {
+    console.error('测试连接失败:', error)
+    window.$ModalMessage.error('测试连接失败')
+  } finally {
+    testing.value = false
   }
 }
 
-function buildConfiguration(): DatasourceConfiguration {
+// 获取表列表
+const fetchTableList = async () => {
+  tableListLoading.value = true
+  try {
+    const config = buildConfiguration()
+    const response = await fetch_tables_by_conf({
+      type: formData.type,
+      configuration: JSON.stringify(config),
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const result = await response.json()
+    if (result.code === 200) {
+      tableList.value = result.data || []
+      // 重置显示数量
+      displayedTableCount.value = Math.min(pageSize.value, tableList.value.length)
+      hasMoreTables.value = tableList.value.length > displayedTableCount.value
+
+      // 如果是编辑模式，加载已选中的表
+      if (props.datasource?.id) {
+        const tablesResponse = await fetch_datasource_table_list(props.datasource.id)
+
+        if (!tablesResponse.ok) {
+          throw new Error(`HTTP error! status: ${tablesResponse.status}`)
+        }
+
+        const tablesResult = await tablesResponse.json()
+        if (tablesResult.code === 200) {
+          selectedTables.value = tablesResult.data
+            .filter((t: any) => t.checked)
+            .map((t: any) => t.table_name)
+        }
+      }
+    } else {
+      window.$ModalMessage.error(result.msg || '获取表列表失败')
+    }
+  } catch (error) {
+    console.error('获取表列表失败:', error)
+    window.$ModalMessage.error('获取表列表失败')
+  } finally {
+    tableListLoading.value = false
+  }
+}
+
+// 构建配置对象
+const buildConfiguration = () => {
   return {
-    host: formData.host.trim(), port: Number(formData.port),
-    username: formData.username.trim(), password: formData.password,
-    database: formData.database.trim(),
-    dbSchema: formData.dbSchema.trim() || formData.database.trim(),
-    extraJdbc: formData.extraJdbc.trim(), timeout: Number(formData.timeout),
+    host: formData.host,
+    port: formData.port,
+    username: formData.username,
+    password: formData.password,
+    database: formData.database,
+    dbSchema: formData.dbSchema || formData.database,
+    extraJdbc: formData.extraJdbc,
+    timeout: formData.timeout,
     mode: formData.mode,
   }
 }
 
-function buildPayload(): SaveDatasourcePayload {
-  return {
-    name: formData.name.trim(), description: formData.description.trim(),
-    type: formData.type,
-    type_name: datasourceTypes.find(item => item.value === formData.type)?.label || formData.type,
-    configuration: JSON.stringify(buildConfiguration()),
-  }
-}
-
-async function testConnection() {
-  try { await formRef.value?.validate() }
-  catch { return }
-  testing.value = true
-  try {
-    const response = await check_datasource_connection({
-      id: props.datasource?.id,
-      type: formData.type,
-      configuration: JSON.stringify(buildConfiguration()),
-    })
-    const result = await response.json()
-    connectionVerified.value = result.code === 200 && result.data?.connected
-    connectionVerified.value
-      ? message.success('连接成功')
-      : message.error(result.data?.error_message || result.msg || '连接失败')
-  }
-  catch (error) {
-    connectionVerified.value = false
-    message.error(error instanceof Error ? error.message : '连接测试失败')
-  }
-  finally { testing.value = false }
-}
-
-async function saveDatasource() {
-  try { await formRef.value?.validate() }
-  catch { return }
-  if (!connectionVerified.value) {
-    message.warning('请先测试并确认连接成功')
+// 下一步（选择表）
+const handleNext = async () => {
+  if (!formRef.value) {
     return
   }
-  saving.value = true
-  try {
-    const payload = buildPayload()
-    const response = props.datasource
-      ? await update_datasource({ ...payload, id: props.datasource.id })
-      : await add_datasource(payload)
-    const result = await response.json()
-    if (result.code !== 200)
-      throw new Error(result.msg || '保存失败')
-    message.success('数据源保存成功')
-    emit('success')
-    emit('update:show', false)
-  }
-  catch (error) {
-    message.error(error instanceof Error ? error.message : '保存失败')
-  }
-  finally { saving.value = false }
+  await formRef.value.validate(async (errors) => {
+    if (errors) {
+      return
+    }
+    // 先测试连接
+    await testConnection()
+    if (tableList.value.length > 0) {
+      currentStep.value = 2
+    }
+  })
 }
 
-watch(() => props.show, show => show && resetForm())
-watch(() => formData.type, (type, previousType) => {
-  if (type !== previousType)
-    formData.port = defaultPorts[type] ?? 3306
+// 上一步
+const handlePrev = () => {
+  currentStep.value = 1
+}
+
+// 加载更多表（无限滚动）
+const loadMoreTables = async () => {
+  if (isLoadingMore.value || !canLoadMore.value) {
+    return
+  }
+
+  isLoadingMore.value = true
+  try {
+    // 模拟加载延迟，实际中可能不需要
+    await new Promise(resolve => setTimeout(resolve, 100))
+
+    // 增加显示数量
+    displayedTableCount.value = Math.min(
+      displayedTableCount.value + pageSize.value,
+      filteredTableList.value.length
+    )
+
+    hasMoreTables.value = displayedTableCount.value < filteredTableList.value.length
+  } finally {
+    isLoadingMore.value = false
+  }
+}
+
+// 无限滚动：滚动到底部自动加载
+useInfiniteScroll(
+  tableListScrollRef,
+  () => {
+    if (!isLoadingMore.value && canLoadMore.value) {
+      loadMoreTables()
+    }
+  },
+  { distance: 100 }
+)
+
+// 全选/取消全选（当前显示的表）
+const handleSelectDisplayed = () => {
+  if (isDisplayedAllSelected.value) {
+    // 取消当前显示的表的选择
+    const displayedTableNames = displayedTableList.value.map((t) => t.tableName)
+    selectedTables.value = selectedTables.value.filter((name) => !displayedTableNames.includes(name))
+    // 取消全选标识（因为只选择了部分表）
+    isSelectAll.value = false
+  } else {
+    // 选择当前显示的所有表
+    const displayedTableNames = displayedTableList.value.map((t) => t.tableName)
+    const newSelected = new Set([...selectedTables.value, ...displayedTableNames])
+    selectedTables.value = Array.from(newSelected)
+    // 检查是否真的全选了所有表
+    if (selectedTables.value.length >= filteredTableList.value.length) {
+      isSelectAll.value = true
+    } else {
+      isSelectAll.value = false
+    }
+  }
+}
+
+// 计算预计处理时间（分钟）
+const calculateEstimatedTime = (tableCount: number): number => {
+  // 每100张表预计需要1分钟，最少1分钟
+  return Math.max(1, Math.ceil(tableCount / 100))
+}
+
+// 格式化时间显示
+const formatEstimatedTime = (minutes: number): string => {
+  if (minutes < 60) {
+    return `约 ${minutes} 分钟`
+  }
+  const hours = Math.floor(minutes / 60)
+  const mins = minutes % 60
+  if (mins === 0) {
+    return `约 ${hours} 小时`
+  }
+  return `约 ${hours} 小时 ${mins} 分钟`
+}
+
+// 全选/取消全选（所有过滤后的表）
+const handleSelectAll = async () => {
+  if (isAllSelected.value) {
+    // 取消所有过滤后的表的选择
+    const filteredTableNames = filteredTableList.value.map((t) => t.tableName)
+    selectedTables.value = selectedTables.value.filter((name) => !filteredTableNames.includes(name))
+    isSelectAll.value = false // 取消全选标识
+    return
+  }
+
+  // 获取筛选后的表数量
+  const filteredCount = filteredTableList.value.length
+  const totalCount = tableList.value.length
+  const displayedCount = displayedTableList.value.length
+  const hasSearch = searchKeyword.value.trim().length > 0
+  const notAllDisplayed = displayedCount < filteredCount
+
+  // 如果筛选后的表数量很大，需要确认
+  const estimatedMinutes = calculateEstimatedTime(filteredCount)
+  const estimatedTimeText = formatEstimatedTime(estimatedMinutes)
+
+  // 构建提示内容
+  let content = `您将选择 ${filteredCount} 张表进行同步。`
+  if (notAllDisplayed) {
+    content += `\n（当前仅显示 ${displayedCount} 张，将自动选择全部 ${filteredCount} 张表）`
+  }
+  if (hasSearch && filteredCount < totalCount) {
+    content += `\n（当前筛选条件：共 ${totalCount} 张表，筛选后 ${filteredCount} 张）`
+  }
+  content += `\n预计处理时间：${estimatedTimeText}\n\n是否继续？`
+
+  // 如果表数量较多或未全部显示，显示确认对话框
+  if (filteredCount > displayedCount || filteredCount > 100) {
+    dialog.warning({
+      title: hasSearch ? '确认全选（筛选结果）' : '确认全选',
+      content,
+      positiveText: '确认全选',
+      negativeText: '取消',
+      onPositiveClick: () => {
+        // 选择所有过滤后的表（这些表已经在内存中，不需要重新拉取）
+        const filteredTableNames = filteredTableList.value.map((t) => t.tableName)
+        const newSelected = new Set([...selectedTables.value, ...filteredTableNames])
+        selectedTables.value = Array.from(newSelected)
+        // 设置全选标识
+        isSelectAll.value = true
+        window.$ModalMessage.success(`已选择 ${filteredCount} 张表，预计处理时间：${estimatedTimeText}`)
+      },
+    })
+  } else {
+    // 表数量不多，直接选择
+    const filteredTableNames = filteredTableList.value.map((t) => t.tableName)
+    const newSelected = new Set([...selectedTables.value, ...filteredTableNames])
+    selectedTables.value = Array.from(newSelected)
+    // 设置全选标识
+    isSelectAll.value = true
+    if (filteredCount > 0) {
+      window.$ModalMessage.success(`已选择 ${filteredCount} 张表，预计处理时间：${estimatedTimeText}`)
+    }
+  }
+}
+
+// 搜索时重置显示数量
+watch(searchKeyword, () => {
+  displayedTableCount.value = pageSize.value
+  hasMoreTables.value = true
 })
-watch(formData, () => { connectionVerified.value = false }, { deep: true })
+
+// 过滤后的表列表（根据搜索关键词）
+const filteredTableList = computed(() => {
+  if (!searchKeyword.value.trim()) {
+    return tableList.value
+  }
+  const keyword = searchKeyword.value.toLowerCase().trim()
+  return tableList.value.filter((table) => {
+    const name = (table.tableName || '').toLowerCase()
+    const comment = (table.tableComment || '').toLowerCase()
+    return name.includes(keyword) || comment.includes(keyword)
+  })
+})
+
+// 当前显示的表列表（用于无限滚动）
+const displayedTableList = computed(() => {
+  return filteredTableList.value.slice(0, displayedTableCount.value)
+})
+
+// 是否还有更多表可以加载
+const canLoadMore = computed(() => {
+  return displayedTableCount.value < filteredTableList.value.length
+})
+
+// 当前显示的表是否全选
+const isDisplayedAllSelected = computed(() => {
+  if (displayedTableList.value.length === 0) {
+    return false
+  }
+  return displayedTableList.value.every((table) => selectedTables.value.includes(table.tableName))
+})
+
+// 是否全选（所有过滤后的表）
+const isAllSelected = computed(() => {
+  if (filteredTableList.value.length === 0) {
+    return false
+  }
+  return filteredTableList.value.every((table) => selectedTables.value.includes(table.tableName))
+})
+
+// 监听选择变化，自动更新全选标识
+watch(selectedTables, (newSelected, oldSelected) => {
+  // 如果选择的表数量等于过滤后的表数量，且过滤后的表数量等于总表数，则认为是全选
+  if (newSelected.length === filteredTableList.value.length && filteredTableList.value.length === tableList.value.length) {
+    isSelectAll.value = true
+  } else {
+    isSelectAll.value = false
+  }
+}, { deep: true })
+
+// 保存数据源
+const handleSave = async () => {
+  // 防止重复提交
+  if (loading.value) {
+    return
+  }
+
+  if (selectedTables.value.length === 0) {
+    window.$ModalMessage.warning('请至少选择一个表')
+    return
+  }
+
+  // 计算预计处理时间并提示用户
+  const selectedCount = selectedTables.value.length
+  const estimatedMinutes = calculateEstimatedTime(selectedCount)
+  const estimatedTimeText = formatEstimatedTime(estimatedMinutes)
+
+  if (selectedCount > 100) {
+    window.$ModalMessage.info(
+      `正在保存 ${selectedCount} 张表，预计处理时间：${estimatedTimeText}，请耐心等待...`,
+      { duration: 5000 }
+    )
+  }
+
+  loading.value = true
+  try {
+    const config = buildConfiguration()
+    // TODO: 加密配置
+    const configuration = JSON.stringify(config)
+
+    const tables = selectedTables.value.map((tableName) => {
+      const table = tableList.value.find((t) => t.tableName === tableName)
+      return {
+        table_name: tableName,
+        table_comment: table?.tableComment || '',
+      }
+    })
+
+    const requestData = {
+      name: formData.name,
+      description: formData.description,
+      type: formData.type,
+      type_name: datasourceTypes.find((t) => t.value === formData.type)?.label || formData.type,
+      configuration,
+      tables,
+    }
+
+    let response
+    let dsId = props.datasource?.id
+    if (props.datasource?.id) {
+      // 更新
+      response = await update_datasource({
+        id: props.datasource.id,
+        ...requestData,
+      })
+    } else {
+      // 新建
+      response = await add_datasource(requestData)
+    }
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const result = await response.json()
+    if (result.code === 200) {
+      dsId = result.data?.id || dsId
+      if (dsId) {
+        try {
+          // 同步表列表（可能耗时较长）
+          // 使用前端设置的全选标识，如果全选则处理所有表，否则仅处理选择的表
+          await sync_datasource_tables(dsId, tables, isSelectAll.value)
+        } catch (syncErr) {
+          console.error('同步表列表失败:', syncErr)
+          // 即使同步失败，也提示用户数据源已创建
+          window.$ModalMessage.warning('数据源已保存，但同步表列表时出现错误，请稍后手动同步')
+        }
+      }
+
+      window.$ModalMessage.success(props.datasource?.id ? '更新成功' : '创建成功')
+      emit('success')
+      handleClose()
+    } else {
+      window.$ModalMessage.error(result.msg || '保存失败')
+    }
+  } catch (error) {
+    console.error('保存数据源失败:', error)
+    if (error instanceof Error && error.name === 'AbortError') {
+      window.$ModalMessage.error('请求超时，请检查网络连接或减少选择的表数量后重试')
+    } else {
+      window.$ModalMessage.error('保存数据源失败')
+    }
+  } finally {
+    loading.value = false
+  }
+}
+
+// 关闭对话框
+const handleClose = () => {
+  emit('update:show', false)
+  initForm()
+}
+
+// 监听 show 变化
+watch(() => props.show, (newVal) => {
+  if (newVal) {
+    initForm()
+  }
+})
 </script>
 
 <template>
   <n-modal
-    v-model:show="modalShow"
-    preset="card"
-    :title="modalTitle"
-    class="datasource-form-modal"
+    :show="show"
     :mask-closable="false"
+    preset="card"
+    :title="datasource ? '编辑数据源' : '新建数据源'"
+    class="datasource-modal"
+    :style="{ width: '700px' }"
+    @update:show="(val) => emit('update:show', val)"
+    @close="handleClose"
   >
-    <n-form ref="formRef" :model="formData" :rules="rules" label-placement="top">
-      <n-grid :cols="2" :x-gap="16">
-        <n-form-item-gi label="数据源名称" path="name">
-          <n-input v-model:value="formData.name" placeholder="例如：业务分析库" />
-        </n-form-item-gi>
-        <n-form-item-gi label="数据库类型" path="type">
-          <n-select v-model:value="formData.type" :options="datasourceTypes" />
-        </n-form-item-gi>
-      </n-grid>
-      <n-form-item label="描述">
-        <n-input v-model:value="formData.description" type="textarea" placeholder="数据源用途" />
-      </n-form-item>
-      <n-grid :cols="2" :x-gap="16">
-        <n-form-item-gi label="主机" path="host"><n-input v-model:value="formData.host" placeholder="127.0.0.1" /></n-form-item-gi>
-        <n-form-item-gi label="端口" path="port"><n-input-number v-model:value="formData.port" :min="1" :max="65535" class="w-full" /></n-form-item-gi>
-        <n-form-item-gi label="用户名" path="username"><n-input v-model:value="formData.username" autocomplete="off" /></n-form-item-gi>
-        <n-form-item-gi label="密码" path="password"><n-input v-model:value="formData.password" type="password" show-password-on="click" autocomplete="new-password" /></n-form-item-gi>
-        <n-form-item-gi label="数据库" path="database"><n-input v-model:value="formData.database" /></n-form-item-gi>
-        <n-form-item-gi v-if="showSchema" label="Schema" path="dbSchema"><n-input v-model:value="formData.dbSchema" placeholder="public" /></n-form-item-gi>
-        <n-form-item-gi v-if="showOracleMode" label="连接模式" path="mode">
-          <n-select
-            v-model:value="formData.mode"
-            :options="[
-              { label: 'Service Name', value: 'service_name' },
-              { label: 'SID', value: 'sid' },
-            ]"
-          />
-        </n-form-item-gi>
-        <n-form-item-gi label="超时时间（秒）"><n-input-number v-model:value="formData.timeout" :min="1" :max="300" class="w-full" /></n-form-item-gi>
-        <n-form-item-gi label="额外连接参数"><n-input v-model:value="formData.extraJdbc" placeholder="例如：sslmode=disable" /></n-form-item-gi>
-      </n-grid>
+    <div class="steps-wrapper">
+      <n-steps
+        :current="currentStep"
+        size="small"
+      >
+        <n-step
+          title="连接配置"
+          description="配置数据库连接信息"
+        />
+        <n-step
+          title="选择表"
+          description="选择需要管理的表"
+        />
+      </n-steps>
+    </div>
+
+    <n-form
+      ref="formRef"
+      :model="formData"
+      :rules="rules"
+      label-placement="left"
+      label-width="100px"
+      require-mark-placement="right-hanging"
+      class="form-content"
+    >
+      <!-- 第一步：基本信息 -->
+      <div
+        v-show="currentStep === 1"
+        class="step-content"
+      >
+        <n-grid
+          :x-gap="24"
+          :cols="1"
+        >
+          <n-grid-item>
+            <n-form-item
+              label="数据源名称"
+              path="name"
+            >
+              <n-input
+                v-model:value="formData.name"
+                placeholder="例如：主业务库"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item>
+            <n-form-item label="描述">
+              <n-input
+                v-model:value="formData.description"
+                type="textarea"
+                placeholder="请输入描述（可选）"
+                :rows="2"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item>
+            <n-form-item
+              label="数据源类型"
+              path="type"
+            >
+              <n-select
+                v-model:value="formData.type"
+                :options="datasourceTypes"
+                placeholder="请选择数据源类型"
+              />
+            </n-form-item>
+          </n-grid-item>
+        </n-grid>
+
+        <n-divider dashed>
+          连接信息
+        </n-divider>
+
+        <n-grid
+          :x-gap="24"
+          :cols="2"
+        >
+          <n-grid-item>
+            <n-form-item
+              label="主机地址"
+              path="host"
+            >
+              <n-input
+                v-model:value="formData.host"
+                placeholder="127.0.0.1"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item>
+            <n-form-item
+              label="端口"
+              path="port"
+            >
+              <n-input-number
+                v-model:value="formData.port"
+                :min="1"
+                :max="65535"
+                placeholder="3306"
+                :show-button="false"
+                style="width: 100%"
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item>
+            <n-form-item label="用户名">
+              <n-input
+                v-model:value="formData.username"
+                placeholder="root"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item>
+            <n-form-item label="密码">
+              <n-input
+                v-model:value="formData.password"
+                type="password"
+                placeholder="请输入密码"
+                show-password-on="click"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item>
+            <n-form-item
+              label="数据库名"
+              path="database"
+            >
+              <n-input
+                v-model:value="formData.database"
+                placeholder="请输入数据库名"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+          <n-grid-item v-if="showSchema">
+            <n-form-item
+              label="Schema"
+              path="dbSchema"
+            >
+              <n-input
+                v-model:value="formData.dbSchema"
+                placeholder="public"
+                clearable
+              />
+            </n-form-item>
+          </n-grid-item>
+        </n-grid>
+
+        <div v-if="showOracleMode || formData.extraJdbc || formData.timeout !== 30">
+          <n-divider dashed>
+            高级设置
+          </n-divider>
+          <n-grid
+            :x-gap="24"
+            :cols="1"
+          >
+            <n-grid-item v-if="showOracleMode">
+              <n-form-item
+                label="连接模式"
+                path="mode"
+              >
+                <n-radio-group v-model:value="formData.mode">
+                  <n-radio value="service_name">
+                    Service Name
+                  </n-radio>
+                  <n-radio value="sid">
+                    SID
+                  </n-radio>
+                </n-radio-group>
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item>
+              <n-form-item label="额外参数">
+                <n-input
+                  v-model:value="formData.extraJdbc"
+                  placeholder="例如: useSSL=false&serverTimezone=UTC"
+                  clearable
+                />
+              </n-form-item>
+            </n-grid-item>
+            <n-grid-item>
+              <n-form-item label="超时时间">
+                <n-input-number
+                  v-model:value="formData.timeout"
+                  :min="1"
+                  :max="300"
+                  placeholder="默认30秒"
+                  style="width: 200px"
+                >
+                  <template #suffix>
+                    秒
+                  </template>
+                </n-input-number>
+              </n-form-item>
+            </n-grid-item>
+          </n-grid>
+        </div>
+      </div>
+
+      <!-- 第二步：选择表 -->
+      <div
+        v-show="currentStep === 2"
+        class="step-content"
+      >
+        <div class="table-selection-header">
+          <div class="selection-info">
+            <n-text>
+              已选择 <span class="highlight">{{ selectedTables.length }}</span> / {{ tableList.length }} 个表
+              <span v-if="searchKeyword.trim()">
+                （筛选后: {{ filteredTableList.length }} 个）
+              </span>
+              <span v-if="isSelectAll" class="select-all-badge">
+                （全选模式）
+              </span>
+            </n-text>
+            <n-text
+              v-if="selectedTables.length > 0"
+              class="estimated-time"
+            >
+              预计处理时间：{{ formatEstimatedTime(calculateEstimatedTime(selectedTables.length)) }}
+            </n-text>
+          </div>
+          <div class="header-actions">
+            <n-button
+              v-if="displayedTableList.length < filteredTableList.length"
+              size="small"
+              secondary
+              @click="handleSelectDisplayed"
+            >
+              {{ isDisplayedAllSelected ? '取消当前显示' : '全选当前显示' }}
+            </n-button>
+            <n-button
+              size="small"
+              secondary
+              @click="handleSelectAll"
+            >
+              {{ isAllSelected ? '取消全选' : '全选筛选' }}
+            </n-button>
+          </div>
+        </div>
+
+        <!-- 搜索框 -->
+        <div class="table-search-wrapper">
+          <n-input
+            v-model:value="searchKeyword"
+            placeholder="搜索表名或注释..."
+            clearable
+            size="small"
+          >
+            <template #prefix>
+              <n-icon>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="11" cy="11" r="8"></circle>
+                  <path d="m21 21-4.35-4.35"></path>
+                </svg>
+              </n-icon>
+            </template>
+          </n-input>
+        </div>
+
+        <n-spin :show="tableListLoading">
+          <div
+            ref="tableListScrollRef"
+            class="table-list-wrapper"
+          >
+            <n-checkbox-group v-model:value="selectedTables">
+              <n-grid
+                :x-gap="12"
+                :y-gap="12"
+                :cols="2"
+              >
+                <n-grid-item
+                  v-for="table in displayedTableList"
+                  :key="table.tableName"
+                >
+                  <div class="table-item">
+                    <n-checkbox
+                      :value="table.tableName"
+                      style="width: 100%"
+                    >
+                      <div class="checkbox-content">
+                        <span class="table-name">{{ table.tableName }}</span>
+                        <span
+                          v-if="table.tableComment"
+                          class="table-comment"
+                        >{{ table.tableComment }}</span>
+                      </div>
+                    </n-checkbox>
+                  </div>
+                </n-grid-item>
+              </n-grid>
+            </n-checkbox-group>
+            <n-empty
+              v-if="tableList.length === 0"
+              description="未找到数据表"
+            />
+            <n-empty
+              v-else-if="filteredTableList.length === 0"
+              description="未找到匹配的表"
+            />
+
+            <!-- 加载更多提示 -->
+            <div
+              v-if="canLoadMore && !isLoadingMore"
+              class="load-more-tip"
+            >
+              <n-text depth="3">
+                滚动到底部加载更多（已显示 {{ displayedTableList.length }} / {{ filteredTableList.length }}）
+              </n-text>
+            </div>
+
+            <!-- 加载中提示 -->
+            <div
+              v-if="isLoadingMore"
+              class="loading-more"
+            >
+              <n-spin size="small">
+                <template #description>
+                  加载更多表中...
+                </template>
+              </n-spin>
+            </div>
+
+            <!-- 已加载全部提示 -->
+            <div
+              v-if="!canLoadMore && filteredTableList.length > 0"
+              class="load-complete"
+            >
+              <n-text depth="3">
+                已显示全部 {{ filteredTableList.length }} 张表
+              </n-text>
+            </div>
+          </div>
+        </n-spin>
+      </div>
     </n-form>
+
     <template #footer>
-      <div class="flex justify-end gap-10">
-        <n-button @click="modalShow = false">取消</n-button>
-        <n-button :loading="testing" @click="testConnection">测试连接</n-button>
-        <n-button type="primary" :loading="saving" @click="saveDatasource">保存</n-button>
+      <div class="modal-actions">
+        <div class="left">
+          <n-button
+            v-if="currentStep === 1"
+            secondary
+            :loading="testing"
+            @click="testConnection"
+          >
+            测试连接
+          </n-button>
+        </div>
+        <div class="right">
+          <n-button @click="handleClose">
+            取消
+          </n-button>
+
+          <n-button
+            v-if="currentStep === 2"
+            @click="handlePrev"
+          >
+            上一步
+          </n-button>
+
+          <n-button
+            v-if="currentStep === 1"
+            type="primary"
+            @click="handleNext"
+          >
+            下一步
+          </n-button>
+
+          <n-button
+            v-if="currentStep === 2"
+            type="primary"
+            :loading="loading"
+            :disabled="loading"
+            @click="handleSave"
+          >
+            保存
+          </n-button>
+        </div>
       </div>
     </template>
   </n-modal>
 </template>
 
-<style scoped>
-.datasource-form-modal { width: min(760px, calc(100vw - 32px)); }
+<style lang="scss" scoped>
+.steps-wrapper {
+  margin-bottom: 24px;
+  padding: 0 12px;
+}
+
+.form-content {
+  padding: 0 12px;
+}
+
+.step-content {
+  min-height: 300px;
+}
+
+.table-selection-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+  padding: 8px 12px;
+  background: #f9fafb;
+  border-radius: 8px;
+
+  .selection-info {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+
+    .estimated-time {
+      font-size: 12px;
+      color: #909399;
+    }
+  }
+
+  .highlight {
+    color: #18a058;
+    font-weight: 600;
+  }
+
+  .select-all-badge {
+    color: #2080f0;
+    font-size: 12px;
+    margin-left: 4px;
+  }
+
+  .header-actions {
+    display: flex;
+    gap: 8px;
+  }
+}
+
+.table-search-wrapper {
+  margin-bottom: 16px;
+}
+
+.table-list-wrapper {
+  max-height: 400px;
+  overflow-y: auto;
+  padding: 4px;
+  min-height: 200px;
+
+  .table-item {
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #eee;
+    transition: all 0.2s;
+
+    &:hover {
+      background: #f9fafb;
+      border-color: #d1d5db;
+    }
+
+    .checkbox-content {
+      display: flex;
+      flex-direction: column;
+      width: 100%;
+      overflow: hidden;
+
+      .table-name {
+        font-weight: 500;
+        color: #374151;
+        margin-bottom: 2px;
+      }
+
+      .table-comment {
+        font-size: 12px;
+        color: #9ca3af;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+    }
+  }
+}
+
+.load-more-tip,
+.loading-more,
+.load-complete {
+  text-align: center;
+  padding: 16px;
+  margin-top: 8px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+
+  .right {
+    display: flex;
+    gap: 12px;
+  }
+}
 </style>

@@ -15,7 +15,7 @@ interface DatasourceItem {
   id: number
   name: string
   description?: string
-  type: 'pg'
+  type: string
   type_name?: string
   status?: string
   num?: string
@@ -51,6 +51,33 @@ const filteredList = computed(() => {
     item.database,
   ].some(value => (value ?? '').toLowerCase().includes(keyword)))
 })
+
+function getIcon(type: string) {
+  const iconModules = import.meta.glob('@/assets/datasource/*', {
+    eager: true,
+    import: 'default',
+    query: '?url',
+  })
+  const iconMap: Record<string, string> = {
+    mysql: 'icon_mysql.svg',
+    pg: 'icon_pg.svg',
+    oracle: 'icon_oracle.svg',
+    sqlServer: 'icon_sqlserver.svg',
+    ck: 'icon_ck.svg',
+    dm: 'icon_dm.png',
+    doris: 'icon_doris.png',
+    redshift: 'icon_redshift.png',
+    es: 'icon_es.png',
+    kingbase: 'icon_kingbase.png',
+    starrocks: 'icon_starrocks.png',
+  }
+  const iconName = iconMap[type] || 'icon_mysql.svg'
+  for (const path in iconModules) {
+    if (path.includes(iconName))
+      return iconModules[path] as string
+  }
+  return iconModules['/src/assets/datasource/icon_mysql.svg'] as string || ''
+}
 
 async function loadDatasourceList() {
   loading.value = true
@@ -118,7 +145,13 @@ function authorizeDatasource(item: DatasourceItem) {
 const columns = computed<DataTableColumns<DatasourceItem>>(() => {
   const base: DataTableColumns<DatasourceItem> = [
     { title: '名称', key: 'name', minWidth: 150 },
-    { title: '类型', key: 'type_name', width: 130 },
+    {
+      title: '类型', key: 'type_name', width: 150,
+      render: row => h('div', { class: 'datasource-type' }, [
+        h('img', { src: getIcon(row.type), alt: row.type_name || row.type }),
+        h('span', row.type_name || row.type),
+      ]),
+    },
     { title: '主机', key: 'host', minWidth: 140 },
     { title: '数据库', key: 'database', minWidth: 130 },
     {
@@ -195,6 +228,8 @@ onMounted(loadDatasourceList)
 .page-header h2 { margin: 0 0 6px; font-size: 24px; }
 .page-header p { margin: 0; color: #888; }
 .header-actions { display: flex; align-items: center; gap: 10px; min-width: min(560px, 55vw); }
+.datasource-type { display: flex; align-items: center; gap: 8px; }
+.datasource-type img { width: 22px; height: 22px; object-fit: contain; }
 @media (max-width: 760px) {
   .page-header { align-items: stretch; flex-direction: column; }
   .header-actions { flex-wrap: wrap; min-width: 0; }

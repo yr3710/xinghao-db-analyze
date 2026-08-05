@@ -14,6 +14,8 @@ import common.datasource_util as datasource_util
 import services.datasource_service as datasource_service_module
 import services.user_service as user_service
 from common.datasource_util import (
+    ConnectType,
+    DB,
     DatasourceConfigUtil,
     DatasourceConnectionUtil,
 )
@@ -103,6 +105,398 @@ def test_postgresql_uri_matches_source_encoding():
     assert "p%40ss/word" in uri
     assert uri.startswith("postgresql+psycopg2://")
     assert "sslmode=disable" in uri
+
+
+def test_database_enum_matches_aix_db_source():
+    expected = {
+        "mysql": ("MySQL", "`", "`", ConnectType.sqlalchemy),
+        "pg": ("PostgreSQL", '"', '"', ConnectType.sqlalchemy),
+        "oracle": ("Oracle", '"', '"', ConnectType.sqlalchemy),
+        "sqlServer": ("SQL Server", "[", "]", ConnectType.sqlalchemy),
+        "ck": ("ClickHouse", '"', '"', ConnectType.sqlalchemy),
+        "dm": ("达梦", '"', '"', ConnectType.py_driver),
+        "doris": ("Apache Doris", "`", "`", ConnectType.py_driver),
+        "redshift": ("AWS Redshift", '"', '"', ConnectType.py_driver),
+        "es": ("Elasticsearch", '"', '"', ConnectType.py_driver),
+        "kingbase": ("Kingbase", '"', '"', ConnectType.py_driver),
+        "starrocks": ("StarRocks", "`", "`", ConnectType.py_driver),
+    }
+
+    assert {
+        item.type_code: (
+            item.db_name,
+            item.prefix,
+            item.suffix,
+            item.connect_type,
+        )
+        for item in DB
+    } == expected
+    assert DB.get_db("SQLSERVER") is DB.sqlServer
+    assert DB.get_db("unknown", default_if_none=True) is DB.pg
+    with pytest.raises(ValueError, match="不支持的数据库类型"):
+        DB.get_db("unknown")
+
+
+@pytest.mark.parametrize(
+    ("ds_type", "expected"),
+    [
+        (
+            "mysql",
+            "mysql+pymysql://report%20user:p%40ss/word@db.local:3306/analytics?charset=utf8mb4",
+        ),
+        (
+            "pg",
+            "postgresql+psycopg2://report%20user:p%40ss/word@db.local:5432/analytics?sslmode=disable",
+        ),
+        (
+            "sqlServer",
+            "mssql+pymssql://report%20user:p%40ss/word@db.local:1433/analytics?charset=utf8",
+        ),
+        (
+            "ck",
+            "clickhouse+http://report%20user:p%40ss/word@db.local:8123/analytics?protocol=http",
+        ),
+    ],
+)
+def test_sqlalchemy_connection_uris_match_source(ds_type, expected):
+    default_ports = {
+        "mysql": 3306,
+        "pg": 5432,
+        "sqlServer": 1433,
+        "ck": 8123,
+    }
+    extra_jdbc = {
+        "mysql": "charset=utf8mb4",
+        "pg": "sslmode=disable",
+        "sqlServer": "charset=utf8",
+        "ck": "protocol=http",
+    }
+    config = {
+        "host": "db.local",
+        "port": default_ports[ds_type],
+        "username": "report user",
+        "password": "p@ss/word",
+        "database": "analytics",
+        "extraJdbc": extra_jdbc[ds_type],
+    }
+
+    assert DatasourceConnectionUtil.build_connection_uri(ds_type, config) == expected
+
+
+def test_oracle_connection_uris_match_source_modes():
+    config = {
+        "host": "oracle.local",
+        "port": 1521,
+        "username": "system",
+        "password": "p@ss",
+        "database": "ORCL",
+        "mode": "service_name",
+        "extraJdbc": "expire_time=10",
+    }
+    assert DatasourceConnectionUtil.build_connection_uri("oracle", config) == (
+        "oracle+oracledb://system:p%40ss@oracle.local:1521"
+        "?service_name=ORCL&expire_time=10"
+    )
+
+    config["mode"] = "sid"
+    assert DatasourceConnectionUtil.build_connection_uri("oracle", config) == (
+        "oracle+oracledb://system:p%40ss@oracle.local:1521/ORCL"
+        "?expire_time=10"
+    )
+
+
+@pytest.mark.parametrize(
+    ("ds_type", "expected_sql", "expected_connect_args"),
+    [
+        ("mysql", "SELECT 1", {"connect_timeout": 12}),
+        ("pg", "SELECT 1", {"connect_timeout": 12}),
+        ("oracle", "SELECT 1 FROM DUAL", None),
+        (
+            "sqlServer",
+            "SELECT 1",
+            {"timeout": 12, "login_timeout": 12, "encryption": "off"},
+        ),
+        ("ck", "SELECT 1", {"connect_timeout": 12}),
+    ],
+)
+def test_sqlalchemy_connection_tests_match_source(
+    monkeypatch,
+    ds_type,
+    expected_sql,
+    expected_connect_args,
+):
+    state = {}
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, statement):
+            state["sql"] = str(statement)
+
+    class FakeEngine:
+        def connect(self):
+            return FakeConnection()
+
+    def fake_create_engine(uri, **kwargs):
+        state["uri"] = uri
+        state["kwargs"] = kwargs
+        return FakeEngine()
+
+    monkeypatch.setattr(datasource_util, "create_engine", fake_create_engine)
+    config = {
+        "host": "db.local",
+        "port": 1521 if ds_type == "oracle" else 5432,
+        "username": "user",
+        "password": "password",
+        "database": "analytics",
+        "timeout": 12,
+    }
+
+    connected, message = DatasourceConnectionUtil.test_connection(ds_type, config)
+
+    assert connected
+    assert message == ""
+    assert state["sql"] == expected_sql
+    assert state["kwargs"]["pool_pre_ping"] is True
+    assert state["kwargs"].get("connect_args") == expected_connect_args
+
+
+def test_extra_jdbc_parser_matches_source():
+    assert DatasourceConnectionUtil._get_extra_config(
+        {"extraJdbc": "ssl=true&charset=utf8mb4&invalid&empty="}
+    ) == {"ssl": "true", "charset": "utf8mb4"}
+
+
+def test_optional_native_drivers_report_source_errors(monkeypatch):
+    monkeypatch.setattr(datasource_util, "dmPython", None)
+    monkeypatch.setattr(datasource_util, "redshift_connector", None)
+
+    dm_connected, dm_message = DatasourceConnectionUtil.test_connection(
+        "dm", {"host": "dm.local"}
+    )
+    redshift_connected, redshift_message = (
+        DatasourceConnectionUtil.test_connection(
+            "redshift", {"host": "redshift.local"}
+        )
+    )
+
+    assert not dm_connected
+    assert dm_message == "未安装达梦数据库驱动 dmPython"
+    assert not redshift_connected
+    assert redshift_message == "未安装 redshift_connector 驱动"
+
+
+@pytest.mark.parametrize(
+    ("ds_type", "driver_name"),
+    [("dm", "dmPython"), ("redshift", "redshift_connector")],
+)
+def test_optional_native_driver_connections_match_source(
+    monkeypatch,
+    ds_type,
+    driver_name,
+):
+    state = {}
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, sql, **kwargs):
+            state["sql"] = sql
+            state["execute_kwargs"] = kwargs
+
+        def fetchall(self):
+            state["fetched"] = True
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def cursor(self):
+            return FakeCursor()
+
+    fake_driver = SimpleNamespace(
+        connect=lambda **kwargs: state.update(kwargs=kwargs) or FakeConnection()
+    )
+    monkeypatch.setattr(datasource_util, driver_name, fake_driver)
+
+    connected, message = DatasourceConnectionUtil.test_connection(
+        ds_type,
+        {
+            "host": "database.local",
+            "port": 5236 if ds_type == "dm" else 5439,
+            "username": "system",
+            "password": "secret",
+            "database": "analytics",
+            "timeout": 18,
+        },
+    )
+
+    assert connected
+    assert message == ""
+    assert state["sql"] == "SELECT 1"
+    if ds_type == "dm":
+        assert state["execute_kwargs"] == {"timeout": 18}
+        assert state["fetched"] is True
+        assert state["kwargs"]["server"] == "database.local"
+    else:
+        assert state["kwargs"]["timeout"] == 18
+        assert state["kwargs"]["database"] == "analytics"
+
+
+@pytest.mark.parametrize("ds_type", ["doris", "starrocks"])
+def test_mysql_protocol_native_connections_match_source(monkeypatch, ds_type):
+    state = {}
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, sql):
+            state["sql"] = sql
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def cursor(self):
+            return FakeCursor()
+
+    def fake_connect(**kwargs):
+        state["kwargs"] = kwargs
+        return FakeConnection()
+
+    monkeypatch.setattr(datasource_util.pymysql, "connect", fake_connect)
+    connected, message = DatasourceConnectionUtil.test_connection(
+        ds_type,
+        {
+            "host": "cluster.local",
+            "port": 9030,
+            "username": "root",
+            "password": "secret",
+            "database": "analytics",
+            "timeout": 20,
+        },
+    )
+
+    assert connected
+    assert message == ""
+    assert state["sql"] == "SELECT 1"
+    assert state["kwargs"]["connect_timeout"] == 60
+    assert state["kwargs"]["read_timeout"] == 20
+    assert state["kwargs"]["write_timeout"] == 20
+
+
+def test_kingbase_native_connection_matches_source(monkeypatch):
+    state = {}
+
+    class FakeCursor:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def execute(self, sql):
+            state["sql"] = sql
+
+    class FakeConnection:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def cursor(self):
+            return FakeCursor()
+
+    monkeypatch.setattr(
+        datasource_util.psycopg2,
+        "connect",
+        lambda **kwargs: state.update(kwargs=kwargs) or FakeConnection(),
+    )
+    connected, message = DatasourceConnectionUtil.test_connection(
+        "kingbase",
+        {
+            "host": "kingbase.local",
+            "port": 54321,
+            "username": "system",
+            "password": "secret",
+            "database": "analytics",
+            "timeout": 8,
+        },
+    )
+
+    assert connected
+    assert message == ""
+    assert state["sql"] == "SELECT 1"
+    assert state["kwargs"]["connect_timeout"] == 8
+
+
+def test_elasticsearch_connection_uses_source_ping(monkeypatch):
+    class FakeElasticsearch:
+        def ping(self):
+            return True
+
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "_get_es_connect",
+        lambda config: FakeElasticsearch(),
+    )
+
+    connected, message = DatasourceConnectionUtil.test_connection(
+        "es",
+        {"host": "http://es.local:9200"},
+    )
+
+    assert connected
+    assert message == ""
+
+
+def test_elasticsearch_failed_ping_matches_source(monkeypatch):
+    class FakeElasticsearch:
+        def ping(self):
+            return False
+
+    monkeypatch.setattr(
+        DatasourceConnectionUtil,
+        "_get_es_connect",
+        lambda config: FakeElasticsearch(),
+    )
+
+    connected, message = DatasourceConnectionUtil.test_connection(
+        "es",
+        {"host": "http://es.local:9200"},
+    )
+
+    assert not connected
+    assert message == "Elasticsearch 连接失败"
+
+
+def test_unknown_database_type_matches_source_error():
+    connected, message = DatasourceConnectionUtil.test_connection(
+        "unknown",
+        {},
+    )
+
+    assert not connected
+    assert message == "不支持的数据库类型: unknown"
 
 
 def test_connection_executes_select_one(monkeypatch):

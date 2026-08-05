@@ -23,7 +23,19 @@ from model.schemas import (
     DatasourceDetailResponse,
     DatasourceListResponse,
     DeleteDatasourceResponse,
+    FieldListResponse,
     GetAuthorizedUsersResponse,
+    GetFieldsByConfRequest,
+    GetFieldsByConfResponse,
+    GetTablesByConfRequest,
+    GetTablesByConfResponse,
+    SaveFieldRequest,
+    SaveFieldResponse,
+    SaveTableRequest,
+    SaveTableResponse,
+    SyncTablesRequest,
+    SyncTablesResponse,
+    TableListResponse,
     UpdateDatasourceRequest,
     UpdateDatasourceResponse,
     get_schema,
@@ -522,3 +534,149 @@ async def authorize_datasource(req: request.Request, body: DatasourceAuthRequest
     except Exception as e:
         logger.error(f"数据源授权失败: {e}", exc_info=True)
         raise MyException(SysCodeEnum.SYSTEM_ERROR, f"数据源授权失败: {str(e)}")
+
+
+@bp.post("/syncTables/<ds_id:int>")
+@openapi.summary("同步数据源表和字段")
+@openapi.response(200, {"application/json": {"schema": get_schema(SyncTablesResponse)}})
+@async_json_resp
+@parse_params
+async def sync_tables(req: request.Request, ds_id: int, body: SyncTablesRequest):
+    await check_admin_permission(req)
+    try:
+        db_pool = get_db_pool()
+        with db_pool.get_session() as session:
+            success = DatasourceService.sync_tables(
+                session, ds_id, body.tables, body.is_select_all or False
+            )
+            if not success:
+                raise MyException(SysCodeEnum.DATA_NOT_FOUND, "数据源不存在")
+            return {"message": "同步成功"}
+    except MyException:
+        raise
+    except Exception as exc:
+        logger.error("同步表和字段失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"同步表和字段失败: {exc}")
+
+
+@bp.post("/getTablesByConf")
+@openapi.summary("根据配置获取表列表")
+@openapi.response(200, {"application/json": {"schema": get_schema(GetTablesByConfResponse)}})
+@async_json_resp
+@parse_params
+async def get_tables_by_conf(req: request.Request, body: GetTablesByConfRequest):
+    try:
+        return DatasourceService.get_tables_by_config(
+            body.type, body.configuration
+        )
+    except Exception as exc:
+        logger.error("获取表列表失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"获取表列表失败: {exc}")
+
+
+@bp.post("/getFieldsByConf")
+@openapi.summary("根据配置获取字段列表")
+@openapi.response(200, {"application/json": {"schema": get_schema(GetFieldsByConfResponse)}})
+@async_json_resp
+@parse_params
+async def get_fields_by_conf(req: request.Request, body: GetFieldsByConfRequest):
+    try:
+        return DatasourceService.get_fields_by_config(
+            body.type, body.configuration, body.table_name
+        )
+    except Exception as exc:
+        logger.error("获取字段列表失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"获取字段列表失败: {exc}")
+
+
+@bp.post("/tableList/<ds_id:int>")
+@openapi.summary("获取数据源表列表")
+@openapi.response(200, {"application/json": {"schema": get_schema(TableListResponse)}})
+@async_json_resp
+@parse_params
+async def get_table_list(req: request.Request, ds_id: int):
+    try:
+        db_pool = get_db_pool()
+        with db_pool.get_session() as session:
+            tables = DatasourceService.get_tables_by_ds_id(session, ds_id)
+            return [
+                {
+                    "id": table.id,
+                    "ds_id": table.ds_id,
+                    "table_name": table.table_name,
+                    "table_comment": table.table_comment,
+                    "custom_comment": table.custom_comment,
+                    "checked": table.checked,
+                }
+                for table in tables
+            ]
+    except Exception as exc:
+        logger.error("获取数据源表列表失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"获取数据源表列表失败: {exc}")
+
+
+@bp.post("/fieldList/<table_id:int>")
+@openapi.summary("获取表字段列表")
+@openapi.response(200, {"application/json": {"schema": get_schema(FieldListResponse)}})
+@async_json_resp
+@parse_params
+async def get_field_list(req: request.Request, table_id: int):
+    try:
+        db_pool = get_db_pool()
+        with db_pool.get_session() as session:
+            fields = DatasourceService.get_fields_by_table_id(session, table_id)
+            return [
+                {
+                    "id": field.id,
+                    "ds_id": field.ds_id,
+                    "table_id": field.table_id,
+                    "field_name": field.field_name,
+                    "field_type": field.field_type,
+                    "field_comment": field.field_comment,
+                    "custom_comment": field.custom_comment,
+                    "field_index": field.field_index,
+                    "checked": field.checked,
+                }
+                for field in fields
+            ]
+    except Exception as exc:
+        logger.error("获取表字段列表失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"获取表字段列表失败: {exc}")
+
+
+@bp.post("/saveTable")
+@openapi.summary("保存表元数据")
+@openapi.response(200, {"application/json": {"schema": get_schema(SaveTableResponse)}})
+@async_json_resp
+@parse_params
+async def save_table(req: request.Request, body: SaveTableRequest):
+    try:
+        db_pool = get_db_pool()
+        with db_pool.get_session() as session:
+            if not DatasourceService.save_table(session, body.model_dump()):
+                raise MyException(SysCodeEnum.DATA_NOT_FOUND, "表不存在")
+            return {"message": "保存成功"}
+    except MyException:
+        raise
+    except Exception as exc:
+        logger.error("保存表元数据失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"保存表元数据失败: {exc}")
+
+
+@bp.post("/saveField")
+@openapi.summary("保存字段元数据")
+@openapi.response(200, {"application/json": {"schema": get_schema(SaveFieldResponse)}})
+@async_json_resp
+@parse_params
+async def save_field(req: request.Request, body: SaveFieldRequest):
+    try:
+        db_pool = get_db_pool()
+        with db_pool.get_session() as session:
+            if not DatasourceService.save_field(session, body.model_dump()):
+                raise MyException(SysCodeEnum.DATA_NOT_FOUND, "字段不存在")
+            return {"message": "保存成功"}
+    except MyException:
+        raise
+    except Exception as exc:
+        logger.error("保存字段元数据失败: %s", exc, exc_info=True)
+        raise MyException(SysCodeEnum.SYSTEM_ERROR, f"保存字段元数据失败: {exc}")

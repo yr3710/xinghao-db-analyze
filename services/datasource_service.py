@@ -4,7 +4,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import select
+from sqlalchemy import and_, select
 from sqlalchemy.orm import Session
 
 from common.datasource_util import (
@@ -154,6 +154,229 @@ class DatasourceService:
     ) -> tuple[bool, str]:
         config = DatasourceService._parse_configuration(configuration)
         return DatasourceConnectionUtil.test_connection(ds_type, config)
+
+    @staticmethod
+    def _save_tables_and_fields(
+        session: Session,
+        datasource: Datasource,
+        tables: List[Dict[str, Any]],
+        is_select_all: bool = False,
+    ) -> None:
+        config = DatasourceConfigUtil.decrypt_config(
+            datasource.configuration
+        )
+        keep_table_ids: List[int] = []
+
+        try:
+            all_db_tables = DatasourceConnectionUtil.get_tables(
+                datasource.type,
+                config,
+            )
+            total_count = len(all_db_tables)
+        except Exception:
+            total_count = len(tables)
+
+        for table_info in tables:
+            table_name = table_info.get("table_name") or table_info.get(
+                "tableName"
+            )
+            table_comment = (
+                table_info.get("table_comment")
+                or table_info.get("tableComment")
+                or ""
+            )
+            if not table_name:
+                continue
+
+            table = (
+                session.query(DatasourceTable)
+                .filter(
+                    DatasourceTable.ds_id == datasource.id,
+                    DatasourceTable.table_name == table_name,
+                )
+                .first()
+            )
+            if table is None:
+                table = DatasourceTable(
+                    ds_id=datasource.id,
+                    checked=True,
+                    table_name=table_name,
+                    table_comment=table_comment,
+                    custom_comment=table_comment,
+                )
+                session.add(table)
+                session.flush()
+                session.refresh(table)
+            else:
+                table.table_comment = table_comment
+                table.custom_comment = table.custom_comment or table_comment
+                table.checked = True
+
+            keep_table_ids.append(table.id)
+
+            try:
+                fields = DatasourceConnectionUtil.get_fields(
+                    datasource.type,
+                    config,
+                    table_name,
+                )
+            except Exception:
+                fields = []
+
+            keep_field_ids: List[int] = []
+            for field_info in fields:
+                field_name = field_info.get("fieldName")
+                if not field_name:
+                    continue
+                field_comment = field_info.get("fieldComment") or ""
+                field_type = field_info.get("fieldType") or ""
+                field_index = field_info.get("fieldIndex") or 0
+
+                field = (
+                    session.query(DatasourceField)
+                    .filter(
+                        and_(
+                            DatasourceField.table_id == table.id,
+                            DatasourceField.field_name == field_name,
+                        )
+                    )
+                    .first()
+                )
+                if field is None:
+                    field = DatasourceField(
+                        ds_id=datasource.id,
+                        table_id=table.id,
+                        checked=True,
+                        field_name=field_name,
+                        field_type=field_type,
+                        field_comment=field_comment,
+                        custom_comment=field_comment,
+                        field_index=field_index,
+                    )
+                    session.add(field)
+                    session.flush()
+                    session.refresh(field)
+                else:
+                    field.field_comment = field_comment
+                    field.field_type = field_type
+                    field.field_index = field_index
+                    if field.custom_comment is None:
+                        field.custom_comment = field_comment
+
+                keep_field_ids.append(field.id)
+
+            if keep_field_ids:
+                session.query(DatasourceField).filter(
+                    and_(
+                        DatasourceField.table_id == table.id,
+                        DatasourceField.id.not_in(keep_field_ids),
+                    )
+                ).delete(synchronize_session=False)
+
+        if keep_table_ids:
+            session.query(DatasourceTable).filter(
+                and_(
+                    DatasourceTable.ds_id == datasource.id,
+                    DatasourceTable.id.not_in(keep_table_ids),
+                )
+            ).delete(synchronize_session=False)
+            session.query(DatasourceField).filter(
+                and_(
+                    DatasourceField.ds_id == datasource.id,
+                    DatasourceField.table_id.not_in(keep_table_ids),
+                )
+            ).delete(synchronize_session=False)
+
+        datasource.num = f"{len(keep_table_ids)}/{total_count}"
+        session.add(datasource)
+
+    @staticmethod
+    def sync_tables(
+        session: Session,
+        ds_id: int,
+        tables: List[Dict[str, Any]],
+        is_select_all: bool = False,
+    ) -> bool:
+        datasource = session.get(Datasource, ds_id)
+        if datasource is None:
+            return False
+        DatasourceService._save_tables_and_fields(
+            session,
+            datasource,
+            tables,
+            is_select_all,
+        )
+        session.commit()
+        return True
+
+    @staticmethod
+    def get_tables_by_config(
+        ds_type: str,
+        configuration: Any,
+    ) -> List[Dict[str, Any]]:
+        config = DatasourceService._parse_configuration(configuration)
+        return DatasourceConnectionUtil.get_tables(ds_type, config)
+
+    @staticmethod
+    def get_fields_by_config(
+        ds_type: str,
+        configuration: Any,
+        table_name: str,
+    ) -> List[Dict[str, Any]]:
+        config = DatasourceService._parse_configuration(configuration)
+        return DatasourceConnectionUtil.get_fields(
+            ds_type,
+            config,
+            table_name,
+        )
+
+    @staticmethod
+    def get_tables_by_ds_id(
+        session: Session,
+        ds_id: int,
+    ) -> List[DatasourceTable]:
+        return session.query(DatasourceTable).filter(
+            DatasourceTable.ds_id == ds_id
+        ).all()
+
+    @staticmethod
+    def get_fields_by_table_id(
+        session: Session,
+        table_id: int,
+    ) -> List[DatasourceField]:
+        return session.query(DatasourceField).filter(
+            DatasourceField.table_id == table_id
+        ).all()
+
+    @staticmethod
+    def save_table(session: Session, data: Dict[str, Any]) -> bool:
+        table_id = data.get("id")
+        if not table_id:
+            return False
+        table = session.get(DatasourceTable, table_id)
+        if table is None:
+            return False
+        if "custom_comment" in data:
+            table.custom_comment = data["custom_comment"]
+        if "checked" in data:
+            table.checked = data["checked"]
+        session.commit()
+        return True
+
+    @staticmethod
+    def save_field(session: Session, data: Dict[str, Any]) -> bool:
+        field_id = data.get("id")
+        if not field_id:
+            return False
+        field = session.get(DatasourceField, field_id)
+        if field is None:
+            return False
+        if "custom_comment" in data:
+            field.custom_comment = data["custom_comment"]
+        if "checked" in data:
+            field.checked = data["checked"]
+        session.commit()
+        return True
 
     @staticmethod
     def get_authorized_users(
